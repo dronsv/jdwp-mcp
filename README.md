@@ -12,9 +12,10 @@ natural language.
 - **Remote Debugging**: Connect to any JVM started with JDWP enabled
 - **Breakpoint Management**: Set, list, and clear breakpoints by class and line
 - **Stack Inspection**: Get summarized stack frames with local variables
-- **Execution Control**: Step over/into/out, continue, pause
-- **Expression Evaluation**: Evaluate Java expressions in frame context
-- **Thread Management**: List and control thread execution
+- **Targeted Variable Reads**: Fetch a single local variable by name
+- **Execution Control**: Continue, pause, and breakpoint-driven inspection
+- **Event Waiting**: Block until the next breakpoint/event with timeout
+- **Thread Management**: List threads and select a default inspection thread
 - **Smart Summarization**: Handles large data structures without overwhelming the LLM
 
 ## Quick Start
@@ -71,14 +72,14 @@ Adjust the path to match where you cloned this repository. The `--scope project`
 | `debug.list_breakpoints` | List active breakpoints |
 | `debug.clear_breakpoint` | Remove a breakpoint |
 | `debug.continue` | Resume execution |
-| `debug.step_over` | Step over current line |
-| `debug.step_into` | Step into method |
-| `debug.step_out` | Step out of method |
 | `debug.get_stack` | Get stack frames with variables |
-| `debug.evaluate` | Evaluate expression |
+| `debug.get_variable` | Read one local variable by name |
+| `debug.select_thread` | Select the default thread for inspection |
 | `debug.list_threads` | List all threads |
 | `debug.pause` | Pause execution |
 | `debug.disconnect` | End debug session |
+| `debug.get_last_event` | Show the last breakpoint/event |
+| `debug.wait_for_event` | Wait for the next event with timeout |
 
 ## Example: Debugging with kubectl port-forward
 
@@ -158,7 +159,7 @@ cargo test
 
 ## Status
 
-✅ **Core Functionality Complete** - Ready for MCP integration
+🚧 **Usable for local JDWP attach and stack inspection**
 
 ### Implemented Features
 - [x] Project structure
@@ -174,6 +175,7 @@ cargo test
 - [x] StackFrame.GetValues (read variable values)
 - [x] Value formatting and display
 - [x] Architecture independence (big-endian protocol, works on Intel & ARM M1/M2/M3)
+- [x] Localhost-only attach by default
 
 ### Working Examples
 - [x] `test_connection` - Basic JDWP handshake
@@ -186,8 +188,8 @@ cargo test
 - [ ] Event loop for async breakpoint notifications
 - [ ] Stepping commands (step over/into/out)
 - [ ] Expression evaluation
-- [ ] String and object dereferencing
-- [ ] Full MCP server integration
+- [ ] Rich object dereferencing
+- [ ] Harder remote-attach policy and auth story
 
 ## References
 

@@ -1,7 +1,7 @@
 // Test complete stack inspection flow
 
-use jdwp_client::{JdwpConnection, SuspendPolicy};
 use jdwp_client::stackframe::VariableSlot;
+use jdwp_client::{JdwpConnection, SuspendPolicy};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,22 +15,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Connected to JVM\n");
 
     // Set up breakpoint on line 64 of HelloController.hello()
-    let classes = conn.classes_by_signature("Lcom/example/probedemo/HelloController;").await?;
+    let classes = conn
+        .classes_by_signature("Lcom/example/probedemo/HelloController;")
+        .await?;
     let class = &classes[0];
 
     let methods = conn.get_methods(class.type_id).await?;
     let hello_method = methods.iter().find(|m| m.name == "hello").unwrap();
 
-    let line_table = conn.get_line_table(class.type_id, hello_method.method_id).await?;
-    let line_64 = line_table.lines.iter().find(|e| e.line_number == 64).unwrap();
+    let line_table = conn
+        .get_line_table(class.type_id, hello_method.method_id)
+        .await?;
+    let line_64 = line_table
+        .lines
+        .iter()
+        .find(|e| e.line_number == 64)
+        .unwrap();
 
     println!("🎯 Setting breakpoint at HelloController.java:64...");
-    let request_id = conn.set_breakpoint(
-        class.type_id,
-        hello_method.method_id,
-        line_64.line_code_index,
-        SuspendPolicy::All,
-    ).await?;
+    let request_id = conn
+        .set_breakpoint(
+            class.type_id,
+            hello_method.method_id,
+            line_64.line_code_index,
+            SuspendPolicy::All,
+        )
+        .await?;
     println!("✓ Breakpoint set (request_id: {})\n", request_id);
 
     println!("💡 Now trigger the endpoint:");
@@ -66,7 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Get variable table to know what variables exist
                         println!("🔬 Inspecting variables...");
-                        let var_table = conn.get_variable_table(class.type_id, hello_method.method_id).await?;
+                        let var_table = conn
+                            .get_variable_table(class.type_id, hello_method.method_id)
+                            .await?;
 
                         // Find variables that are valid at this bytecode location
                         let current_index = frame.location.index;
@@ -78,7 +90,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             })
                             .collect();
 
-                        println!("✓ Found {} active variables at this location:\n", active_vars.len());
+                        println!(
+                            "✓ Found {} active variables at this location:\n",
+                            active_vars.len()
+                        );
 
                         // Build slots to request
                         let slots: Vec<VariableSlot> = active_vars
@@ -90,7 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .collect();
 
                         // Get values!
-                        let values = conn.get_frame_values(thread_id, frame.frame_id, slots).await?;
+                        let values = conn
+                            .get_frame_values(thread_id, frame.frame_id, slots)
+                            .await?;
 
                         // Display variables
                         for (var, value) in active_vars.iter().zip(values.iter()) {

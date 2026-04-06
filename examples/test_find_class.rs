@@ -27,8 +27,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let class = &classes[0];
     println!("✓ Found class:");
     println!("  Type ID: {:x}", class.type_id);
-    println!("  Tag: {} (1=class, 2=interface, 3=array)", class.ref_type_tag);
-    println!("  Status: {} (verified, prepared, initialized, error)\n", class.status);
+    println!(
+        "  Tag: {} (1=class, 2=interface, 3=array)",
+        class.ref_type_tag
+    );
+    println!(
+        "  Status: {} (verified, prepared, initialized, error)\n",
+        class.status
+    );
 
     // Get methods
     println!("Getting methods...");
@@ -49,15 +55,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let line_table = conn.get_line_table(class.type_id, method.method_id).await?;
         println!("  Line table: {} entries", line_table.lines.len());
-        println!("  Bytecode range: {} - {}", line_table.start, line_table.end);
+        println!(
+            "  Bytecode range: {} - {}",
+            line_table.start, line_table.end
+        );
 
         for entry in &line_table.lines {
-            println!("    Line {} → bytecode index {}", entry.line_number, entry.line_code_index);
+            println!(
+                "    Line {} → bytecode index {}",
+                entry.line_number, entry.line_code_index
+            );
         }
 
         // Find bytecode position for line 65 (inside hello method)
         if let Some(line_entry) = line_table.lines.iter().find(|e| e.line_number == 65) {
-            println!("\n🎯 Line 65 maps to bytecode index: {}", line_entry.line_code_index);
+            println!(
+                "\n🎯 Line 65 maps to bytecode index: {}",
+                line_entry.line_code_index
+            );
         }
     }
 

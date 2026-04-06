@@ -63,8 +63,7 @@ Clear breakpoint bp_1
 ```
 Continue execution
 Pause all threads
-Step over this line
-Step into this method
+Wait for the next breakpoint event
 ```
 
 **Inspection:**
@@ -72,11 +71,8 @@ Step into this method
 Show me the current stack with variables
 List all threads
 Get the stack for thread 5
-```
-
-**Evaluation:**
-```
-Evaluate myVariable.toString() in the current frame
+Select thread 0x1a2b
+Get variable baseCube from the current frame
 ```
 
 **Cleanup:**

@@ -30,7 +30,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Field ID: {} bytes", id_sizes.field_id_size);
     println!("  Method ID: {} bytes", id_sizes.method_id_size);
     println!("  Object ID: {} bytes", id_sizes.object_id_size);
-    println!("  ReferenceType ID: {} bytes", id_sizes.reference_type_id_size);
+    println!(
+        "  ReferenceType ID: {} bytes",
+        id_sizes.reference_type_id_size
+    );
     println!("  Frame ID: {} bytes", id_sizes.frame_id_size);
 
     println!("\n🎉 All VM commands working!");
