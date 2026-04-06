@@ -2,10 +2,10 @@
 //
 // Manages JDWP connection state, breakpoints, and thread tracking
 
-use jdwp_client::{JdwpConnection, EventSet};
+use jdwp_client::{EventSet, JdwpConnection};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 
 pub type SessionId = String;
@@ -15,7 +15,12 @@ pub struct DebugSession {
     pub connection: JdwpConnection,
     pub breakpoints: HashMap<String, BreakpointInfo>,
     pub threads: HashMap<String, ThreadInfo>,
+    pub class_signatures: HashMap<u64, String>,
+    pub active_step: Option<StepRequestInfo>,
+    pub selected_thread_id: Option<u64>,
     pub last_event: Option<EventSet>,
+    pub last_event_seq: u64,
+    pub last_event_notify: Arc<Notify>,
     pub event_listener_task: Option<JoinHandle<()>>,
 }
 
@@ -38,6 +43,13 @@ pub struct ThreadInfo {
     pub suspended: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct StepRequestInfo {
+    pub request_id: i32,
+    pub thread_id: u64,
+    pub depth: String,
+}
+
 #[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<SessionId, Arc<Mutex<DebugSession>>>>>,
@@ -58,7 +70,12 @@ impl SessionManager {
             connection,
             breakpoints: HashMap::new(),
             threads: HashMap::new(),
+            class_signatures: HashMap::new(),
+            active_step: None,
+            selected_thread_id: None,
             last_event: None,
+            last_event_seq: 0,
+            last_event_notify: Arc::new(Notify::new()),
             event_listener_task: None,
         };
 

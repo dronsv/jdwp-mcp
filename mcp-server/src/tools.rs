@@ -27,6 +27,11 @@ pub fn get_tools() -> Vec<Tool> {
                         "type": "integer",
                         "description": "Connection timeout in milliseconds",
                         "default": 5000
+                    },
+                    "allow_remote": {
+                        "type": "boolean",
+                        "description": "Allow attaching to a non-localhost host",
+                        "default": false
                     }
                 },
                 "required": ["host", "port"]
@@ -78,57 +83,49 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "debug.continue".to_string(),
-            description: "Resume execution (all threads or specific thread)".to_string(),
+            description: "Resume execution for all threads".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        Tool {
+            name: "debug.step_into".to_string(),
+            description: "Step into the next source line on a thread".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "thread_id": {
                         "type": "string",
-                        "description": "Thread ID to resume (optional, resumes all if omitted)"
+                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or selected thread)"
                     }
                 }
             }),
         },
         Tool {
             name: "debug.step_over".to_string(),
-            description: "Step over current line".to_string(),
+            description: "Step over the next source line on a thread".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "thread_id": {
                         "type": "string",
-                        "description": "Thread ID to step"
+                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or selected thread)"
                     }
-                },
-                "required": ["thread_id"]
-            }),
-        },
-        Tool {
-            name: "debug.step_into".to_string(),
-            description: "Step into method call".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID to step"
-                    }
-                },
-                "required": ["thread_id"]
+                }
             }),
         },
         Tool {
             name: "debug.step_out".to_string(),
-            description: "Step out of current method".to_string(),
+            description: "Step out of the current frame on a thread".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "thread_id": {
                         "type": "string",
-                        "description": "Thread ID to step"
+                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or selected thread)"
                     }
-                },
-                "required": ["thread_id"]
+                }
             }),
         },
         Tool {
@@ -156,36 +153,45 @@ pub fn get_tools() -> Vec<Tool> {
                         "description": "How deep to traverse object graphs (1-3)",
                         "default": 2
                     }
-                },
-                "required": ["thread_id"]
+                }
             }),
         },
         Tool {
-            name: "debug.evaluate".to_string(),
-            description: "Evaluate expression in frame context".to_string(),
+            name: "debug.get_variable".to_string(),
+            description: "Get a single local variable by name from a stack frame".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Local variable name"
+                    },
                     "thread_id": {
                         "type": "string",
-                        "description": "Thread ID"
+                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or first thread)"
                     },
                     "frame_index": {
                         "type": "integer",
                         "description": "Stack frame index (0 = current frame)",
                         "default": 0
-                    },
-                    "expression": {
-                        "type": "string",
-                        "description": "Java expression to evaluate"
-                    },
-                    "max_result_length": {
-                        "type": "integer",
-                        "description": "Maximum length of result string",
-                        "default": 500
                     }
                 },
-                "required": ["thread_id", "expression"]
+                "required": ["name"]
+            }),
+        },
+        Tool {
+            name: "debug.select_thread".to_string(),
+            description: "Select a default thread for subsequent stack and variable inspection"
+                .to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Thread ID in hex form like 0x1a2b"
+                    }
+                },
+                "required": ["thread_id"]
             }),
         },
         Tool {
@@ -198,15 +204,10 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "debug.pause".to_string(),
-            description: "Pause execution (all threads or specific thread)".to_string(),
+            description: "Pause execution for all threads".to_string(),
             input_schema: json!({
                 "type": "object",
-                "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID to pause (optional, pauses all if omitted)"
-                    }
-                }
+                "properties": {}
             }),
         },
         Tool {
@@ -223,6 +224,20 @@ pub fn get_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {}
+            }),
+        },
+        Tool {
+            name: "debug.wait_for_event".to_string(),
+            description: "Wait for the next breakpoint/event or time out".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Maximum time to wait in milliseconds",
+                        "default": 30000
+                    }
+                }
             }),
         },
     ]

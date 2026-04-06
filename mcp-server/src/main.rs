@@ -5,7 +5,7 @@
 use anyhow::Result;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 mod handlers;
 mod protocol;
@@ -52,8 +52,6 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
-                debug!("Received: {}", line);
-
                 // Parse as generic Value first
                 match serde_json::from_str::<Value>(line) {
                     Ok(value) => {
@@ -64,7 +62,6 @@ async fn main() -> Result<()> {
                                 Ok(request) => {
                                     let response = handler.handle_request(request).await;
                                     let response_str = serde_json::to_string(&response)?;
-                                    debug!("Sending: {}", response_str);
                                     stdout.write_all(response_str.as_bytes()).await?;
                                     stdout.write_all(b"\n").await?;
                                     stdout.flush().await?;
