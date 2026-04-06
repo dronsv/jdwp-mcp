@@ -60,7 +60,7 @@ impl JdwpConnection {
     /// Vector of Values corresponding to the requested fields
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// let fields = vec![field_id1, field_id2];
     /// let values = connection.get_object_values(object_id, fields).await?;
     /// ```

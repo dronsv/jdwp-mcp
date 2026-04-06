@@ -26,7 +26,11 @@ impl JdwpConnection {
         slots: Vec<VariableSlot>,
     ) -> JdwpResult<Vec<Value>> {
         let id = self.next_id();
-        let mut packet = CommandPacket::new(id, command_sets::STACK_FRAME, stack_frame_commands::GET_VALUES);
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::STACK_FRAME,
+            stack_frame_commands::GET_VALUES,
+        );
 
         // Write thread ID and frame ID
         packet.data.put_u64(thread_id);
@@ -90,6 +94,9 @@ fn read_value_by_tag(tag: u8, buf: &mut &[u8]) -> JdwpResult<ValueData> {
             let object_id = read_u64(buf)?;
             Ok(ValueData::Object(object_id))
         }
-        _ => Err(crate::protocol::JdwpError::Protocol(format!("Unknown value tag: {}", tag))),
+        _ => Err(crate::protocol::JdwpError::Protocol(format!(
+            "Unknown value tag: {}",
+            tag
+        ))),
     }
 }

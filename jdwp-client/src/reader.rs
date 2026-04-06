@@ -1,12 +1,14 @@
 // Helper functions for reading JDWP data types from buffers
 
-use bytes::Buf;
 use crate::protocol::{JdwpError, JdwpResult};
+use bytes::Buf;
 
 /// Read a JDWP string (4-byte length prefix + UTF-8 bytes)
 pub fn read_string(buf: &mut &[u8]) -> JdwpResult<String> {
     if buf.remaining() < 4 {
-        return Err(JdwpError::Protocol("Not enough data for string length".to_string()));
+        return Err(JdwpError::Protocol(
+            "Not enough data for string length".to_string(),
+        ));
     }
 
     let len = buf.get_u32() as usize;

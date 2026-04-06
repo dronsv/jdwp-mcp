@@ -29,10 +29,35 @@ pub struct FieldInfo {
 }
 
 impl JdwpConnection {
-    /// Get methods for a reference type (ReferenceType.Methods command)
-    pub async fn get_methods(&mut self, ref_type_id: ReferenceTypeId) -> JdwpResult<Vec<MethodInfo>> {
+    /// Get the JVM signature for a reference type (ReferenceType.Signature command)
+    pub async fn get_signature(&mut self, ref_type_id: ReferenceTypeId) -> JdwpResult<String> {
         let id = self.next_id();
-        let mut packet = CommandPacket::new(id, command_sets::REFERENCE_TYPE, reference_type_commands::METHODS);
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::REFERENCE_TYPE,
+            reference_type_commands::SIGNATURE,
+        );
+
+        packet.data.put_u64(ref_type_id);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        read_string(&mut data)
+    }
+
+    /// Get methods for a reference type (ReferenceType.Methods command)
+    pub async fn get_methods(
+        &mut self,
+        ref_type_id: ReferenceTypeId,
+    ) -> JdwpResult<Vec<MethodInfo>> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::REFERENCE_TYPE,
+            reference_type_commands::METHODS,
+        );
 
         // Write reference type ID (8 bytes)
         packet.data.put_u64(ref_type_id);
@@ -72,7 +97,7 @@ impl JdwpConnection {
     /// Vector of FieldInfo containing field IDs, names, signatures, and modifiers
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// let fields = connection.get_fields(class_id).await?;
     /// for field in fields {
     ///     println!("Field: {} ({})", field.name, field.signature);
@@ -80,7 +105,11 @@ impl JdwpConnection {
     /// ```
     pub async fn get_fields(&mut self, ref_type_id: ReferenceTypeId) -> JdwpResult<Vec<FieldInfo>> {
         let id = self.next_id();
-        let mut packet = CommandPacket::new(id, command_sets::REFERENCE_TYPE, reference_type_commands::FIELDS);
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::REFERENCE_TYPE,
+            reference_type_commands::FIELDS,
+        );
 
         // Write reference type ID (8 bytes)
         packet.data.put_u64(ref_type_id);

@@ -33,7 +33,7 @@ pub struct VmIdSizes {
 /// Class information from ClassesBySignature
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassInfo {
-    pub ref_type_tag: u8,  // 1=class, 2=interface, 3=array
+    pub ref_type_tag: u8, // 1=class, 2=interface, 3=array
     pub type_id: ReferenceTypeId,
     pub signature: String,
     pub status: i32,
@@ -95,7 +95,11 @@ impl JdwpConnection {
     /// Signature format: "Lcom/example/MyClass;" for classes
     pub async fn classes_by_signature(&mut self, signature: &str) -> JdwpResult<Vec<ClassInfo>> {
         let id = self.next_id();
-        let mut packet = CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, vm_commands::CLASSES_BY_SIGNATURE);
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::VIRTUAL_MACHINE,
+            vm_commands::CLASSES_BY_SIGNATURE,
+        );
 
         // Write signature as JDWP string (4-byte length + UTF-8 bytes)
         let sig_bytes = signature.as_bytes();
@@ -120,6 +124,36 @@ impl JdwpConnection {
                 ref_type_tag,
                 type_id,
                 signature: signature.to_string(),
+                status,
+            });
+        }
+
+        Ok(classes)
+    }
+
+    /// List all currently loaded classes (VirtualMachine.AllClasses command)
+    pub async fn all_classes(&mut self) -> JdwpResult<Vec<ClassInfo>> {
+        let id = self.next_id();
+        let packet =
+            CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, vm_commands::ALL_CLASSES);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        let classes_count = read_i32(&mut data)?;
+        let mut classes = Vec::with_capacity(classes_count as usize);
+
+        for _ in 0..classes_count {
+            let ref_type_tag = read_u8(&mut data)?;
+            let type_id = crate::reader::read_u64(&mut data)?;
+            let signature = read_string(&mut data)?;
+            let status = read_i32(&mut data)?;
+
+            classes.push(ClassInfo {
+                ref_type_tag,
+                type_id,
+                signature,
                 status,
             });
         }

@@ -13,15 +13,15 @@ use serde::{Deserialize, Serialize};
 /// Line table entry - maps source line to bytecode index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineTableEntry {
-    pub line_code_index: u64,  // bytecode index
-    pub line_number: i32,       // source line number
+    pub line_code_index: u64, // bytecode index
+    pub line_number: i32,     // source line number
 }
 
 /// Complete line table for a method
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineTable {
-    pub start: u64,   // starting bytecode index
-    pub end: u64,     // ending bytecode index
+    pub start: u64, // starting bytecode index
+    pub end: u64,   // ending bytecode index
     pub lines: Vec<LineTableEntry>,
 }
 
@@ -74,7 +74,8 @@ impl JdwpConnection {
         method_id: MethodId,
     ) -> JdwpResult<Vec<Variable>> {
         let id = self.next_id();
-        let mut packet = CommandPacket::new(id, command_sets::METHOD, method_commands::VARIABLE_TABLE);
+        let mut packet =
+            CommandPacket::new(id, command_sets::METHOD, method_commands::VARIABLE_TABLE);
 
         // Write reference type ID and method ID
         packet.data.put_u64(ref_type_id);

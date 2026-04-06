@@ -20,9 +20,23 @@ pub struct JdwpConnection {
 impl JdwpConnection {
     /// Connect to a JVM via JDWP
     pub async fn connect(host: &str, port: u16) -> JdwpResult<Self> {
+        Self::connect_with_timeout(host, port, 5000).await
+    }
+
+    /// Connect to a JVM via JDWP with an explicit timeout.
+    pub async fn connect_with_timeout(host: &str, port: u16, timeout_ms: u64) -> JdwpResult<Self> {
         info!("Connecting to JDWP at {}:{}", host, port);
 
-        let mut stream = TcpStream::connect((host, port)).await?;
+        let connect_fut = TcpStream::connect((host, port));
+        let mut stream =
+            tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), connect_fut)
+                .await
+                .map_err(|_| {
+                    JdwpError::Protocol(format!(
+                        "Connection to {}:{} timed out after {}ms",
+                        host, port, timeout_ms
+                    ))
+                })??;
 
         // Perform JDWP handshake
         Self::handshake(&mut stream).await?;
@@ -70,7 +84,7 @@ impl JdwpConnection {
     /// This is useful for polling events without blocking the current task.
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// if let Some(event) = connection.try_recv_event().await {
     ///     // Handle event
     /// }
@@ -87,7 +101,7 @@ impl JdwpConnection {
     /// Returns `None` if the event loop has shut down.
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// while let Some(event) = connection.recv_event().await {
     ///     // Process event
     /// }

@@ -127,9 +127,7 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
                 let thread = read_u64(&mut buf)?;
                 EventKind::VMStart { thread }
             }
-            event_kinds::VM_DEATH => {
-                EventKind::VMDeath
-            }
+            event_kinds::VM_DEATH => EventKind::VMDeath,
             event_kinds::THREAD_START => {
                 let thread = read_u64(&mut buf)?;
                 EventKind::ThreadStart { thread }

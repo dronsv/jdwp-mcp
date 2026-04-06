@@ -7,27 +7,27 @@
 // - Variable evaluation
 // - Execution control
 
-pub mod connection;
-pub mod protocol;
 pub mod commands;
-pub mod events;
+pub mod connection;
 pub mod eventloop;
-pub mod types;
-pub mod reader;
-pub mod vm;
-pub mod reftype;
-pub mod method;
 pub mod eventrequest;
-pub mod thread;
+pub mod events;
+pub mod method;
+pub mod object;
+pub mod protocol;
+pub mod reader;
+pub mod reftype;
 pub mod stackframe;
 pub mod string;
-pub mod object;
+pub mod thread;
+pub mod types;
+pub mod vm;
 
 pub use connection::JdwpConnection;
-pub use eventloop::{EventLoopHandle, spawn_event_loop};
+pub use eventloop::{spawn_event_loop, EventLoopHandle};
+pub use eventrequest::{StepDepth, StepSize, SuspendPolicy};
 pub use events::EventSet;
 pub use protocol::{JdwpError, JdwpResult};
-pub use eventrequest::SuspendPolicy;
 
 #[cfg(test)]
 mod tests {

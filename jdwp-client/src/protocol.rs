@@ -93,7 +93,10 @@ impl ReplyPacket {
         let flags = buf.get_u8();
 
         if flags != REPLY_FLAG {
-            return Err(JdwpError::Protocol(format!("Invalid reply flag: {:#x}", flags)));
+            return Err(JdwpError::Protocol(format!(
+                "Invalid reply flag: {:#x}",
+                flags
+            )));
         }
 
         let error_code = buf.get_u16();
@@ -223,10 +226,10 @@ mod tests {
     fn test_reply_packet_decode() {
         // Construct a reply packet manually with big-endian values
         let mut reply_data = vec![
-            0, 0, 0, 11,  // length = 11 (big-endian)
-            0, 0, 0, 1,   // id = 1 (big-endian)
-            0x80,         // reply flag
-            0, 0,         // error code = 0 (big-endian)
+            0, 0, 0, 11, // length = 11 (big-endian)
+            0, 0, 0, 1,    // id = 1 (big-endian)
+            0x80, // reply flag
+            0, 0, // error code = 0 (big-endian)
         ];
 
         let packet = ReplyPacket::decode(&reply_data).unwrap();

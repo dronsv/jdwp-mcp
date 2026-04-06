@@ -26,7 +26,8 @@ impl JdwpConnection {
         length: i32,
     ) -> JdwpResult<Vec<Frame>> {
         let id = self.next_id();
-        let mut packet = CommandPacket::new(id, command_sets::THREAD_REFERENCE, thread_commands::FRAMES);
+        let mut packet =
+            CommandPacket::new(id, command_sets::THREAD_REFERENCE, thread_commands::FRAMES);
 
         // Write thread ID
         packet.data.put_u64(thread_id);
@@ -70,7 +71,11 @@ impl JdwpConnection {
     /// Get all threads (VirtualMachine.AllThreads)
     pub async fn get_all_threads(&mut self) -> JdwpResult<Vec<ThreadId>> {
         let id = self.next_id();
-        let packet = CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, crate::commands::vm_commands::ALL_THREADS);
+        let packet = CommandPacket::new(
+            id,
+            command_sets::VIRTUAL_MACHINE,
+            crate::commands::vm_commands::ALL_THREADS,
+        );
 
         let reply = self.send_command(packet).await?;
         reply.check_error()?;
@@ -90,7 +95,11 @@ impl JdwpConnection {
     /// Suspend all threads (VirtualMachine.Suspend)
     pub async fn suspend_all(&mut self) -> JdwpResult<()> {
         let id = self.next_id();
-        let packet = CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, crate::commands::vm_commands::SUSPEND);
+        let packet = CommandPacket::new(
+            id,
+            command_sets::VIRTUAL_MACHINE,
+            crate::commands::vm_commands::SUSPEND,
+        );
 
         let reply = self.send_command(packet).await?;
         reply.check_error()?;
@@ -101,7 +110,11 @@ impl JdwpConnection {
     /// Resume all threads (VirtualMachine.Resume)
     pub async fn resume_all(&mut self) -> JdwpResult<()> {
         let id = self.next_id();
-        let packet = CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, crate::commands::vm_commands::RESUME);
+        let packet = CommandPacket::new(
+            id,
+            command_sets::VIRTUAL_MACHINE,
+            crate::commands::vm_commands::RESUME,
+        );
 
         let reply = self.send_command(packet).await?;
         reply.check_error()?;
