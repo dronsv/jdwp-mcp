@@ -1,0 +1,53 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Start test Java app
+        run: |
+          cd test-app
+          docker compose up --build -d
+          # Wait for JDWP port to be ready
+          for i in $(seq 1 30); do
+            if nc -z localhost 5005 2>/dev/null; then
+              echo "JDWP port ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run integration tests
+        run: |
+          cd test-app
+          ./test_mcp.sh ../target/release/jdwp-mcp
+
+      - name: Show test app logs on failure
+        if: failure()
+        run: |
+          cd test-app
+          docker compose logs
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd test-app
+          docker compose down
