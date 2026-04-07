@@ -14,3 +14,8 @@ Cargo.lock
 
 # Debug
 *.log
+
+# Python build artifacts
+dist/
+*.egg-info/
+__pycache__/
