@@ -71,4 +71,8 @@ gh issue create --repo dronsv/jdwp-mcp \
   --body "## Context\nWhat I was investigating and what went wrong.\n\n## Expected\nWhat the tool should have done.\n\n## Actual\nWhat happened instead.\n\n## Suggestion\nHow to fix or improve."
 ```
 
-Label with `bug` if a tool misbehaved, `enhancement` if a capability is missing, `docs` if instructions were unclear. Ask the user before creating the issue.
+Label with `bug` if a tool misbehaved, `enhancement` if a capability is missing, `docs` if instructions were unclear.
+
+**Privacy:** Never include user-specific details in the issue — no class names, variable values, SQL, business logic, hostnames, or project context from the investigation. Describe the gap generically: "trace returned 0 calls for a valid class pattern" not "trace returned 0 calls for com.acme.internal.BillingService". The issue is about the tool, not the user's code.
+
+Always ask the user before creating the issue.
