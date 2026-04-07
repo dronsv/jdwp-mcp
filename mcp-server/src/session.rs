@@ -34,10 +34,21 @@ pub struct TraceState {
     pub exit_request_id: i32,
     #[allow(dead_code)]
     pub include_args: bool,
+    pub aggregate: bool,
     pub calls: Vec<TraceCall>,
+    pub agg_stats: HashMap<(u64, u64), AggMethodStats>,
+    pub entry_times: HashMap<(u64, u64, u32), Instant>,
     pub depth_per_thread: HashMap<u64, u32>,
     pub start_time: Instant,
     pub max_calls: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct AggMethodStats {
+    pub class_id: u64,
+    pub method_id: u64,
+    pub call_count: u64,
+    pub total_ms: u64,
 }
 
 #[derive(Debug, Clone)]

@@ -252,7 +252,8 @@ pub fn get_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "class_pattern": { "type": "string", "description": "e.g. com.example.service (appends * automatically)" },
-                    "include_args": { "type": "boolean", "default": false, "description": "capture method args (slower)" }
+                    "include_args": { "type": "boolean", "default": false, "description": "capture method args (slower)" },
+                    "aggregate": { "type": "boolean", "default": false, "description": "aggregate mode: count calls + wall-clock time per method" }
                 },
                 "required": ["class_pattern"]
             }),

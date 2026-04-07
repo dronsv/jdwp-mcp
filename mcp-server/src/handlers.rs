@@ -2295,33 +2295,66 @@ impl RequestHandler {
         }
 
         // Phase 2: mutate trace state (store raw IDs, resolve names at output time)
+        let now = std::time::Instant::now();
         let trace = session.trace_state.as_mut().unwrap();
+        let is_aggregate = trace.aggregate;
         for (thread, class_id, method_id, is_entry) in raw {
-            if trace.calls.len() >= max {
-                trace.active = false;
-                break;
-            }
             if is_entry {
+                if is_aggregate {
+                    // Record entry timestamp keyed by (thread, class, depth)
+                    let depth = *trace.depth_per_thread.entry(thread).or_insert(0);
+                    trace.entry_times.insert((thread, class_id, depth), now);
+                    // Increment call count
+                    let stats = trace
+                        .agg_stats
+                        .entry((class_id, method_id))
+                        .or_insert_with(|| crate::session::AggMethodStats {
+                            class_id,
+                            method_id,
+                            call_count: 0,
+                            total_ms: 0,
+                        });
+                    stats.call_count += 1;
+                }
+
                 let depth = trace.depth_per_thread.entry(thread).or_insert(0);
-                trace.calls.push(crate::session::TraceCall {
-                    thread_id: thread,
-                    class_id,
-                    method_id,
-                    depth: *depth,
-                    result: crate::session::TraceResult::Entry,
-                });
+                if !is_aggregate {
+                    if trace.calls.len() >= max {
+                        trace.active = false;
+                        break;
+                    }
+                    trace.calls.push(crate::session::TraceCall {
+                        thread_id: thread,
+                        class_id,
+                        method_id,
+                        depth: *depth,
+                        result: crate::session::TraceResult::Entry,
+                    });
+                }
                 *depth += 1;
             } else {
                 let depth = trace.depth_per_thread.entry(thread).or_insert(0);
                 if *depth > 0 {
                     *depth -= 1;
                 }
-                if let Some(call) = trace.calls.iter_mut().rev().find(|c| {
-                    c.thread_id == thread
-                        && c.depth == *depth
-                        && matches!(c.result, crate::session::TraceResult::Entry)
-                }) {
-                    call.result = crate::session::TraceResult::Returned(None);
+
+                if is_aggregate {
+                    // Find entry time and accumulate elapsed
+                    if let Some(entry_time) = trace.entry_times.remove(&(thread, class_id, *depth))
+                    {
+                        let elapsed = now.duration_since(entry_time).as_millis() as u64;
+                        if let Some(stats) = trace.agg_stats.get_mut(&(class_id, method_id)) {
+                            stats.total_ms += elapsed;
+                        }
+                    }
+                } else {
+                    if let Some(call) = trace.calls.iter_mut().rev().find(|c| {
+                        c.thread_id == thread
+                            && c.depth == *depth
+                            && matches!(c.result, crate::session::TraceResult::Entry)
+                    }) {
+                        call.result = crate::session::TraceResult::Returned(None);
+                    }
                 }
             }
         }
@@ -2338,6 +2371,10 @@ impl RequestHandler {
             .ok_or_else(|| "Missing 'class_pattern'".to_string())?;
         let include_args = args
             .get("include_args")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let aggregate = args
+            .get("aggregate")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -2392,7 +2429,10 @@ impl RequestHandler {
             entry_request_id: entry_id,
             exit_request_id: exit_id,
             include_args,
+            aggregate,
             calls: Vec::new(),
+            agg_stats: std::collections::HashMap::new(),
+            entry_times: std::collections::HashMap::new(),
             depth_per_thread: std::collections::HashMap::new(),
             start_time: std::time::Instant::now(),
             max_calls: 500,
@@ -2421,58 +2461,91 @@ impl RequestHandler {
             .ok_or_else(|| "No active trace. Use debug.trace first.".to_string())?;
 
         let elapsed = trace.start_time.elapsed().as_millis();
-        let call_count = trace.calls.len();
-        let truncated = !trace.active && call_count >= trace.max_calls;
 
-        // Build output
-        let output = if call_count == 0 {
-            format!(
-                "trace: 0 calls in {}ms (no matching methods hit)\n",
-                elapsed
-            )
+        // Build output based on mode
+        let output = if trace.aggregate {
+            // Aggregate mode: sorted by total_ms descending
+            let total_calls: u64 = trace.agg_stats.values().map(|s| s.call_count).sum();
+            if total_calls == 0 {
+                format!(
+                    "trace: 0 calls in {}ms (no matching methods hit)\n",
+                    elapsed
+                )
+            } else {
+                let mut stats: Vec<_> = trace.agg_stats.values().collect();
+                stats.sort_by(|a, b| b.total_ms.cmp(&a.total_ms));
+
+                let mut out = format!("trace: {} calls, {}ms (aggregate)\n", total_calls, elapsed);
+                for s in &stats {
+                    let class_name = Self::get_class_signature(&mut session, s.class_id)
+                        .await
+                        .and_then(|sig| Self::signature_to_display_name(&sig))
+                        .unwrap_or_else(|| format!("0x{:x}", s.class_id));
+                    let method_name =
+                        if let Ok(methods) = session.connection.get_methods(s.class_id).await {
+                            methods
+                                .iter()
+                                .find(|m| m.method_id == s.method_id)
+                                .map(|m| m.name.clone())
+                                .unwrap_or_else(|| format!("0x{:x}", s.method_id))
+                        } else {
+                            format!("0x{:x}", s.method_id)
+                        };
+                    out.push_str(&format!(
+                        "  {}.{}  x{}  {}ms\n",
+                        class_name, method_name, s.call_count, s.total_ms
+                    ));
+                }
+                out
+            }
         } else {
-            let mut out = format!("trace: {} calls, {}ms\n", call_count, elapsed);
-
-            // Resolve class and method names
-            for (idx, call) in trace.calls.iter().enumerate() {
-                let indent = "  ".repeat(call.depth as usize);
-
-                // Resolve class name
-                let class_name = Self::get_class_signature(&mut session, call.class_id)
-                    .await
-                    .and_then(|sig| Self::signature_to_display_name(&sig))
-                    .unwrap_or_else(|| format!("0x{:x}", call.class_id));
-
-                // Resolve method name
-                let method_name =
-                    if let Ok(methods) = session.connection.get_methods(call.class_id).await {
-                        methods
-                            .iter()
-                            .find(|m| m.method_id == call.method_id)
-                            .map(|m| m.name.clone())
-                            .unwrap_or_else(|| format!("0x{:x}", call.method_id))
-                    } else {
-                        format!("0x{:x}", call.method_id)
+            // Detail mode: per-call list
+            let call_count = trace.calls.len();
+            let truncated = !trace.active && call_count >= trace.max_calls;
+            if call_count == 0 {
+                format!(
+                    "trace: 0 calls in {}ms (no matching methods hit)\n",
+                    elapsed
+                )
+            } else {
+                let mut out = format!("trace: {} calls, {}ms\n", call_count, elapsed);
+                for (idx, call) in trace.calls.iter().enumerate() {
+                    let indent = "  ".repeat(call.depth as usize);
+                    let class_name = Self::get_class_signature(&mut session, call.class_id)
+                        .await
+                        .and_then(|sig| Self::signature_to_display_name(&sig))
+                        .unwrap_or_else(|| format!("0x{:x}", call.class_id));
+                    let method_name =
+                        if let Ok(methods) = session.connection.get_methods(call.class_id).await {
+                            methods
+                                .iter()
+                                .find(|m| m.method_id == call.method_id)
+                                .map(|m| m.name.clone())
+                                .unwrap_or_else(|| format!("0x{:x}", call.method_id))
+                        } else {
+                            format!("0x{:x}", call.method_id)
+                        };
+                    let result_suffix = match &call.result {
+                        crate::session::TraceResult::Returned(Some(v)) => format!(" -> {}", v),
+                        crate::session::TraceResult::ThrewException(e) => {
+                            format!(" -> threw {}", e)
+                        }
+                        _ => String::new(),
                     };
-
-                let result_suffix = match &call.result {
-                    crate::session::TraceResult::Returned(Some(v)) => format!(" -> {}", v),
-                    crate::session::TraceResult::ThrewException(e) => format!(" -> threw {}", e),
-                    _ => String::new(),
-                };
-                out.push_str(&format!(
-                    "#{} {}{}.{}{}\n",
-                    idx + 1,
-                    indent,
-                    class_name,
-                    method_name,
-                    result_suffix
-                ));
+                    out.push_str(&format!(
+                        "#{} {}{}.{}{}\n",
+                        idx + 1,
+                        indent,
+                        class_name,
+                        method_name,
+                        result_suffix
+                    ));
+                }
+                if truncated {
+                    out.push_str("(truncated at 500 calls)\n");
+                }
+                out
             }
-            if truncated {
-                out.push_str("(truncated at 500 calls)\n");
-            }
-            out
         };
 
         // Clear or put back
