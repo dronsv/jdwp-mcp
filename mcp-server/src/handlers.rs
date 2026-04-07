@@ -33,6 +33,11 @@ STRATEGY C — Exception debugging:
 STRATEGY D — Field watchpoint:
   debug.watch (class, field) → debug.wait_for_event → debug.get_stack (see who modified the field)
 
+STRATEGY E — Request path tracing (best for "which code path did my request take?"):
+  debug.trace (class_pattern) → send HTTP request to app → debug.trace_result
+  Shows the exact call sequence with depth: which methods were called and in what order.
+  Use this when a breakpoint doesn't hit and you don't know which path the request took.
+
 KEY TIPS:
 - debug.snapshot gives event + breakpoints + stack in one call — use it after any stop event
 - debug.get_stack auto-resolves object fields (shows ClassName{field=val} not just @hex)
@@ -299,6 +304,8 @@ impl RequestHandler {
             "debug.snapshot" => self.handle_snapshot(call_params.arguments).await,
             "debug.vm_info" => self.handle_vm_info(call_params.arguments).await,
             "debug.watch" => self.handle_watch(call_params.arguments).await,
+            "debug.trace" => self.handle_trace(call_params.arguments).await,
+            "debug.trace_result" => self.handle_trace_result(call_params.arguments).await,
             _ => Err(format!("Unknown tool: {}", call_params.name)),
         };
 
@@ -378,6 +385,15 @@ impl RequestHandler {
 
                             // Store event (brief lock acquisition)
                             if let Some(event_set) = event_opt {
+                                // Collect trace events (METHOD_ENTRY/EXIT) if tracing is active
+                                let is_trace_event =
+                                    Self::collect_trace_events(&session_manager, &event_set)
+                                        .await;
+
+                                if is_trace_event {
+                                    continue;
+                                }
+
                                 let step_request_to_clear = {
                                     if let Some(session_guard) =
                                         session_manager.get_current_session().await
@@ -2043,5 +2059,239 @@ impl RequestHandler {
         };
 
         actual.trim_matches('"') != expected.trim_matches('"')
+    }
+
+    /// Collect trace events into session trace state. Returns true if events were trace-only.
+    async fn collect_trace_events(
+        session_manager: &SessionManager,
+        event_set: &jdwp_client::EventSet,
+    ) -> bool {
+        let session_guard = match session_manager.get_current_session().await {
+            Some(g) => g,
+            None => return false,
+        };
+        let mut session = session_guard.lock().await;
+
+        let (entry_req, exit_req, max) =
+            match session.trace_state.as_ref().filter(|t| t.active) {
+                Some(t) => (t.entry_request_id, t.exit_request_id, t.max_calls),
+                None => return false,
+            };
+
+        // Phase 1: extract event data (no mutable borrows)
+        let mut collected = false;
+        let mut raw: Vec<(u64, u64, u64, bool)> = Vec::new();
+        for event in &event_set.events {
+            let is_entry = event.request_id == entry_req;
+            let is_exit = event.request_id == exit_req;
+            if !is_entry && !is_exit {
+                continue;
+            }
+            collected = true;
+            match &event.details {
+                jdwp_client::events::EventKind::MethodEntry { thread, location } => {
+                    raw.push((*thread, location.class_id, location.method_id, true));
+                }
+                jdwp_client::events::EventKind::MethodExit { thread, .. } => {
+                    raw.push((*thread, 0, 0, false));
+                }
+                _ => {}
+            }
+        }
+
+        if !collected {
+            return false;
+        }
+
+        // Phase 2: resolve class names (immutable borrow of class_signatures)
+        let resolved: Vec<(u64, String, u64, bool)> = raw
+            .into_iter()
+            .map(|(thread, class_id, method_id, is_entry)| {
+                let name = if is_entry {
+                    session
+                        .class_signatures
+                        .get(&class_id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("0x{:x}", class_id))
+                } else {
+                    String::new()
+                };
+                (thread, name, method_id, is_entry)
+            })
+            .collect();
+
+        // Phase 3: mutate trace state
+        let trace = session.trace_state.as_mut().unwrap();
+        for (thread, class_name, method_id, is_entry) in resolved {
+            if trace.calls.len() >= max {
+                trace.active = false;
+                break;
+            }
+            if is_entry {
+                let depth = trace.depth_per_thread.entry(thread).or_insert(0);
+                trace.calls.push(crate::session::TraceCall {
+                    class_name,
+                    method_name: format!("0x{:x}", method_id),
+                    depth: *depth,
+                    result: crate::session::TraceResult::Entry,
+                });
+                *depth += 1;
+            } else {
+                let depth = trace.depth_per_thread.entry(thread).or_insert(0);
+                if *depth > 0 {
+                    *depth -= 1;
+                }
+                if let Some(call) = trace.calls.iter_mut().rev().find(|c| {
+                    c.depth == *depth
+                        && matches!(c.result, crate::session::TraceResult::Entry)
+                }) {
+                    call.result = crate::session::TraceResult::Returned(None);
+                }
+            }
+        }
+        if trace.start_time.elapsed().as_secs() > 60 {
+            trace.active = false;
+        }
+        true
+    }
+
+    async fn handle_trace(&self, args: serde_json::Value) -> Result<String, String> {
+        let class_pattern = args
+            .get("class_pattern")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'class_pattern'".to_string())?;
+        let include_args = args
+            .get("include_args")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        // Clear any existing trace
+        if let Some(old_trace) = session.trace_state.take() {
+            if old_trace.active {
+                let _ = session
+                    .connection
+                    .clear_method_entry_trace(old_trace.entry_request_id)
+                    .await;
+                let _ = session
+                    .connection
+                    .clear_method_exit_trace(old_trace.exit_request_id)
+                    .await;
+            }
+        }
+
+        // Convert dot notation to JDWP glob: com.example.service → com.example.service.*
+        let pattern = if class_pattern.contains('*') {
+            class_pattern.to_string()
+        } else {
+            format!("{}*", class_pattern)
+        };
+
+        let suspend = if include_args {
+            jdwp_client::SuspendPolicy::EventThread
+        } else {
+            jdwp_client::SuspendPolicy::None
+        };
+
+        let entry_id = session
+            .connection
+            .set_method_entry_trace(&pattern, suspend)
+            .await
+            .map_err(|e| format!("Failed to set method entry trace: {}", e))?;
+
+        let exit_id = session
+            .connection
+            .set_method_exit_trace(&pattern, suspend)
+            .await
+            .map_err(|e| format!("Failed to set method exit trace: {}", e))?;
+
+        session.trace_state = Some(crate::session::TraceState {
+            active: true,
+            entry_request_id: entry_id,
+            exit_request_id: exit_id,
+            include_args,
+            calls: Vec::new(),
+            depth_per_thread: std::collections::HashMap::new(),
+            start_time: std::time::Instant::now(),
+            max_calls: 500,
+        });
+
+        Ok(format!("tracing {}* armed (entry={}, exit={})", class_pattern, entry_id, exit_id))
+    }
+
+    async fn handle_trace_result(&self, args: serde_json::Value) -> Result<String, String> {
+        let clear = args
+            .get("clear")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        // Take trace state out to avoid borrow conflicts
+        let trace = session
+            .trace_state
+            .take()
+            .ok_or_else(|| "No active trace. Use debug.trace first.".to_string())?;
+
+        let elapsed = trace.start_time.elapsed().as_millis();
+        let call_count = trace.calls.len();
+        let truncated = !trace.active && call_count >= trace.max_calls;
+
+        // Build output
+        let output = if call_count == 0 {
+            format!("trace: 0 calls in {}ms (no matching methods hit)\n", elapsed)
+        } else {
+            let mut out = format!("trace: {} calls, {}ms\n", call_count, elapsed);
+            for (idx, call) in trace.calls.iter().enumerate() {
+                let indent = "  ".repeat(call.depth as usize);
+                let class_short = Self::signature_to_display_name(&call.class_name)
+                    .unwrap_or_else(|| call.class_name.clone());
+                let result_suffix = match &call.result {
+                    crate::session::TraceResult::Returned(Some(v)) => format!(" -> {}", v),
+                    crate::session::TraceResult::ThrewException(e) => format!(" -> threw {}", e),
+                    _ => String::new(),
+                };
+                out.push_str(&format!(
+                    "#{} {}{}.{}{}\n",
+                    idx + 1,
+                    indent,
+                    class_short,
+                    call.method_name,
+                    result_suffix
+                ));
+            }
+            if truncated {
+                out.push_str("(truncated at 500 calls)\n");
+            }
+            out
+        };
+
+        // Clear or put back
+        if clear {
+            let _ = session
+                .connection
+                .clear_method_entry_trace(trace.entry_request_id)
+                .await;
+            let _ = session
+                .connection
+                .clear_method_exit_trace(trace.exit_request_id)
+                .await;
+            // trace_state already taken out (None)
+        } else {
+            session.trace_state = Some(trace);
+        }
+
+        Ok(output)
     }
 }

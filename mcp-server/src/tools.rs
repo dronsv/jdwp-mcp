@@ -245,5 +245,27 @@ pub fn get_tools() -> Vec<Tool> {
                 "required": ["class_pattern", "field"]
             }),
         },
+        Tool {
+            name: "debug.trace".to_string(),
+            description: "Trace method calls on a class/package. Returns immediately; use debug.trace_result to get the call path.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "class_pattern": { "type": "string", "description": "e.g. com.example.service (appends * automatically)" },
+                    "include_args": { "type": "boolean", "default": false, "description": "capture method args (slower)" }
+                },
+                "required": ["class_pattern"]
+            }),
+        },
+        Tool {
+            name: "debug.trace_result".to_string(),
+            description: "Get collected trace after debug.trace. Shows call path with depth.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "clear": { "type": "boolean", "default": true, "description": "stop tracing after retrieval" }
+                }
+            }),
+        },
     ]
 }

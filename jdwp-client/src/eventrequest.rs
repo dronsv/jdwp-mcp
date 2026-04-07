@@ -11,6 +11,7 @@ use bytes::BufMut;
 
 /// Suspend policy for events
 #[repr(u8)]
+#[derive(Debug, Clone, Copy)]
 pub enum SuspendPolicy {
     None = 0,
     EventThread = 1,
@@ -209,6 +210,69 @@ impl JdwpConnection {
     /// Clear a field watchpoint by request ID.
     pub async fn clear_field_watch(&mut self, request_id: i32) -> JdwpResult<()> {
         self.clear_event_request(event_kinds::FIELD_MODIFICATION, request_id)
+            .await
+    }
+
+    /// Set METHOD_ENTRY trace on classes matching a pattern.
+    /// Uses ClassMatch modifier (kind=5) with a glob pattern like "com.example.*".
+    /// Returns the request ID.
+    pub async fn set_method_entry_trace(
+        &mut self,
+        class_pattern: &str,
+        suspend_policy: SuspendPolicy,
+    ) -> JdwpResult<i32> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(id, command_sets::EVENT_REQUEST, event_commands::SET);
+
+        packet.data.put_u8(event_kinds::METHOD_ENTRY);
+        packet.data.put_u8(suspend_policy as u8);
+
+        // 1 modifier: ClassMatch (5)
+        packet.data.put_i32(1);
+        packet.data.put_u8(5);
+        crate::protocol::write_jdwp_string(&mut packet.data, class_pattern);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        read_i32(&mut data)
+    }
+
+    /// Set METHOD_EXIT trace on classes matching a pattern.
+    /// Returns the request ID.
+    pub async fn set_method_exit_trace(
+        &mut self,
+        class_pattern: &str,
+        suspend_policy: SuspendPolicy,
+    ) -> JdwpResult<i32> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(id, command_sets::EVENT_REQUEST, event_commands::SET);
+
+        packet.data.put_u8(event_kinds::METHOD_EXIT);
+        packet.data.put_u8(suspend_policy as u8);
+
+        // 1 modifier: ClassMatch (5)
+        packet.data.put_i32(1);
+        packet.data.put_u8(5);
+        crate::protocol::write_jdwp_string(&mut packet.data, class_pattern);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        read_i32(&mut data)
+    }
+
+    /// Clear a method entry trace by request ID.
+    pub async fn clear_method_entry_trace(&mut self, request_id: i32) -> JdwpResult<()> {
+        self.clear_event_request(event_kinds::METHOD_ENTRY, request_id)
+            .await
+    }
+
+    /// Clear a method exit trace by request ID.
+    pub async fn clear_method_exit_trace(&mut self, request_id: i32) -> JdwpResult<()> {
+        self.clear_event_request(event_kinds::METHOD_EXIT, request_id)
             .await
     }
 }

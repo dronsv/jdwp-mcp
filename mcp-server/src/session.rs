@@ -5,6 +5,7 @@
 use jdwp_client::{EventSet, JdwpConnection};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
 
@@ -23,6 +24,36 @@ pub struct DebugSession {
     pub last_event_seq: u64,
     pub last_event_notify: Arc<Notify>,
     pub event_listener_task: Option<JoinHandle<()>>,
+    pub trace_state: Option<TraceState>,
+}
+
+#[derive(Debug)]
+pub struct TraceState {
+    pub active: bool,
+    pub entry_request_id: i32,
+    pub exit_request_id: i32,
+    #[allow(dead_code)]
+    pub include_args: bool,
+    pub calls: Vec<TraceCall>,
+    pub depth_per_thread: HashMap<u64, u32>,
+    pub start_time: Instant,
+    pub max_calls: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceCall {
+    pub class_name: String,
+    pub method_name: String,
+    pub depth: u32,
+    pub result: TraceResult,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum TraceResult {
+    Entry,
+    Returned(Option<String>),
+    ThrewException(String),
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +120,7 @@ impl SessionManager {
             last_event_seq: 0,
             last_event_notify: Arc::new(Notify::new()),
             event_listener_task: None,
+            trace_state: None,
         };
 
         let mut state = self.state.lock().await;
