@@ -275,4 +275,36 @@ impl JdwpConnection {
         self.clear_event_request(event_kinds::METHOD_EXIT, request_id)
             .await
     }
+
+    /// Set a CLASS_PREPARE event for classes matching a pattern.
+    /// Fires when the JVM loads a class that matches. Use with SuspendPolicy::All
+    /// to pause when the class loads so you can set breakpoints immediately.
+    pub async fn set_class_prepare(
+        &mut self,
+        class_pattern: &str,
+        suspend_policy: SuspendPolicy,
+    ) -> JdwpResult<i32> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(id, command_sets::EVENT_REQUEST, event_commands::SET);
+
+        packet.data.put_u8(event_kinds::CLASS_PREPARE);
+        packet.data.put_u8(suspend_policy as u8);
+
+        // 1 modifier: ClassMatch (5)
+        packet.data.put_i32(1);
+        packet.data.put_u8(5);
+        crate::protocol::write_jdwp_string(&mut packet.data, class_pattern);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        read_i32(&mut data)
+    }
+
+    /// Clear a CLASS_PREPARE event by request ID.
+    pub async fn clear_class_prepare(&mut self, request_id: i32) -> JdwpResult<()> {
+        self.clear_event_request(event_kinds::CLASS_PREPARE, request_id)
+            .await
+    }
 }

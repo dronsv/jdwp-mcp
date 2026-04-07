@@ -57,6 +57,7 @@ COMMON ERRORS:
 - "Connection refused" → JVM not started with JDWP flags, or wrong port
 - "THREAD_NOT_SUSPENDED" → use debug.pause or hit a breakpoint before debug.eval
 - "No method found at line X" → use debug.list_methods to find valid line ranges
+- "Class not found" → class not loaded yet. Use debug.wait_for_class to wait for it, then retry set_breakpoint. JVM loads classes lazily — trigger the code path first (send a request) or use wait_for_class.
 
 EXAMPLE 1 — "API returns wrong data, find why":
   debug.attach localhost:5005
@@ -345,6 +346,7 @@ impl RequestHandler {
             "debug.watch" => self.handle_watch(call_params.arguments).await,
             "debug.trace" => self.handle_trace(call_params.arguments).await,
             "debug.trace_result" => self.handle_trace_result(call_params.arguments).await,
+            "debug.wait_for_class" => self.handle_wait_for_class(call_params.arguments).await,
             _ => Err(format!("Unknown tool: {}", call_params.name)),
         };
 
@@ -2420,5 +2422,97 @@ impl RequestHandler {
         }
 
         Ok(output)
+    }
+
+    async fn handle_wait_for_class(&self, args: serde_json::Value) -> Result<String, String> {
+        let class_pattern = args
+            .get("class_pattern")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'class_pattern'".to_string())?;
+        let timeout_ms = args
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30000)
+            .min(120_000);
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        // Check if class is already loaded
+
+        let existing = Self::resolve_classes(&mut session, class_pattern).await;
+        if let Ok(ref classes) = existing {
+            if !classes.is_empty() {
+                let name = Self::signature_to_display_name(&classes[0].signature)
+                    .unwrap_or_else(|| classes[0].signature.clone());
+                return Ok(format!("class already loaded: {}", name));
+            }
+        }
+
+        // Set CLASS_PREPARE event
+        let glob = if class_pattern.contains('*') || class_pattern.contains('.') {
+            class_pattern.to_string()
+        } else {
+            format!("*{}", class_pattern)
+        };
+
+        let request_id = session
+            .connection
+            .set_class_prepare(&glob, jdwp_client::SuspendPolicy::All)
+            .await
+            .map_err(|e| format!("Failed to set class prepare: {}", e))?;
+
+        // Release lock while waiting
+        let notify = session.last_event_notify.clone();
+        let start_seq = session.last_event_seq;
+        drop(session);
+
+        let wait_result =
+            tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
+                loop {
+                    let future = notify.notified();
+                    tokio::pin!(future);
+                    future.as_mut().enable();
+                    {
+                        let session = session_guard.lock().await;
+                        if session.last_event_seq > start_seq {
+                            if let Some(ref event_set) = session.last_event {
+                                for event in &event_set.events {
+                                    if let jdwp_client::events::EventKind::ClassPrepare {
+                                        signature,
+                                        ..
+                                    } = &event.details
+                                    {
+                                        return Some(signature.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    future.await;
+                }
+            })
+            .await;
+
+        // Clear the event request
+        {
+            let mut session = session_guard.lock().await;
+            let _ = session.connection.clear_class_prepare(request_id).await;
+        }
+
+        match wait_result {
+            Ok(Some(sig)) => {
+                let name = Self::signature_to_display_name(&sig).unwrap_or(sig);
+                Ok(format!("class loaded: {}", name))
+            }
+            _ => Err(format!(
+                "class '{}' not loaded within {}ms",
+                class_pattern, timeout_ms
+            )),
+        }
     }
 }

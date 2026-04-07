@@ -267,5 +267,17 @@ pub fn get_tools() -> Vec<Tool> {
                 }
             }),
         },
+        Tool {
+            name: "debug.wait_for_class".to_string(),
+            description: "Wait for a class to be loaded by the JVM. Use when set_breakpoint says class not found.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "class_pattern": { "type": "string", "description": "e.g. com.example.MyService or *MyService" },
+                    "timeout_ms": { "type": "integer", "default": 30000 }
+                },
+                "required": ["class_pattern"]
+            }),
+        },
     ]
 }
