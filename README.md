@@ -42,24 +42,25 @@ One prompt. Six tool calls. Lock contention + root cause identified.
 
 ### 1. Install
 
-**Pre-built binary** (no Rust required):
+```bash
+curl -fsSL https://raw.githubusercontent.com/navicore/jdwp-mcp/main/install.sh | sh
+```
 
-Download from [Releases](https://github.com/navicore/jdwp-mcp/releases) for your platform (Linux, macOS, Windows).
-
-**Via cargo** (requires Rust toolchain):
+<details>
+<summary>Other install methods</summary>
 
 ```bash
+# pip (no Rust required)
+pip install jdwp-mcp
+
+# cargo
 cargo install --git https://github.com/navicore/jdwp-mcp
+
+# from source
+git clone https://github.com/navicore/jdwp-mcp && cd jdwp-mcp && cargo build --release
 ```
 
-**From source:**
-
-```bash
-git clone https://github.com/navicore/jdwp-mcp
-cd jdwp-mcp
-cargo build --release
-# binary at target/release/jdwp-mcp
-```
+</details>
 
 ### 2. Configure your agent
 
