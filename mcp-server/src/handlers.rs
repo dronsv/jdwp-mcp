@@ -1027,6 +1027,14 @@ impl RequestHandler {
     }
 
     async fn handle_get_stack(&self, args: serde_json::Value) -> Result<String, String> {
+        // Wrap in catch_unwind-style error handling — get_stack must never crash the server
+        match self.handle_get_stack_inner(args).await {
+            Ok(output) => Ok(output),
+            Err(e) => Err(format!("get_stack failed: {}", e)),
+        }
+    }
+
+    async fn handle_get_stack_inner(&self, args: serde_json::Value) -> Result<String, String> {
         let session_guard = self
             .session_manager
             .get_current_session()
@@ -1125,21 +1133,27 @@ impl RequestHandler {
                                     })
                                     .collect();
 
-                                if let Ok(values) = session
+                                match session
                                     .connection
                                     .get_frame_values(target_thread, frame.frame_id, slots)
                                     .await
                                 {
-                                    let mut pairs = Vec::new();
-                                    for (var, val) in active_vars.iter().zip(values.iter()) {
-                                        let formatted = if resolve_objects {
-                                            Self::format_value_resolved(&mut session, val).await
-                                        } else {
-                                            Self::format_value_leaf(&mut session, val).await
-                                        };
-                                        pairs.push(format!("{}={}", var.name, formatted));
+                                    Ok(values) => {
+                                        let mut pairs = Vec::new();
+                                        for (var, val) in active_vars.iter().zip(values.iter()) {
+                                            // Catch errors in value resolution to prevent crash
+                                            let formatted = if resolve_objects {
+                                                Self::format_value_resolved(&mut session, val).await
+                                            } else {
+                                                Self::format_value_leaf(&mut session, val).await
+                                            };
+                                            pairs.push(format!("{}={}", var.name, formatted));
+                                        }
+                                        var_line = format!("  {}\n", pairs.join("  "));
                                     }
-                                    var_line = format!("  {}\n", pairs.join("  "));
+                                    Err(e) => {
+                                        var_line = format!("  (failed to read variables: {})\n", e);
+                                    }
                                 }
                             }
                         }
