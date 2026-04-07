@@ -426,8 +426,7 @@ impl RequestHandler {
                             if let Some(event_set) = event_opt {
                                 // Collect trace events (METHOD_ENTRY/EXIT) if tracing is active
                                 let is_trace_event =
-                                    Self::collect_trace_events(&session_manager, &event_set)
-                                        .await;
+                                    Self::collect_trace_events(&session_manager, &event_set).await;
 
                                 if is_trace_event {
                                     continue;
@@ -2111,11 +2110,10 @@ impl RequestHandler {
         };
         let mut session = session_guard.lock().await;
 
-        let (entry_req, exit_req, max) =
-            match session.trace_state.as_ref().filter(|t| t.active) {
-                Some(t) => (t.entry_request_id, t.exit_request_id, t.max_calls),
-                None => return false,
-            };
+        let (entry_req, exit_req, max) = match session.trace_state.as_ref().filter(|t| t.active) {
+            Some(t) => (t.entry_request_id, t.exit_request_id, t.max_calls),
+            None => return false,
+        };
 
         // Phase 1: extract event data (no mutable borrows)
         let mut collected = false;
@@ -2164,8 +2162,7 @@ impl RequestHandler {
                     *depth -= 1;
                 }
                 if let Some(call) = trace.calls.iter_mut().rev().find(|c| {
-                    c.depth == *depth
-                        && matches!(c.result, crate::session::TraceResult::Entry)
+                    c.depth == *depth && matches!(c.result, crate::session::TraceResult::Entry)
                 }) {
                     call.result = crate::session::TraceResult::Returned(None);
                 }
@@ -2244,14 +2241,14 @@ impl RequestHandler {
             max_calls: 500,
         });
 
-        Ok(format!("tracing {}* armed (entry={}, exit={})", class_pattern, entry_id, exit_id))
+        Ok(format!(
+            "tracing {}* armed (entry={}, exit={})",
+            class_pattern, entry_id, exit_id
+        ))
     }
 
     async fn handle_trace_result(&self, args: serde_json::Value) -> Result<String, String> {
-        let clear = args
-            .get("clear")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        let clear = args.get("clear").and_then(|v| v.as_bool()).unwrap_or(true);
 
         let session_guard = self
             .session_manager
@@ -2272,7 +2269,10 @@ impl RequestHandler {
 
         // Build output
         let output = if call_count == 0 {
-            format!("trace: 0 calls in {}ms (no matching methods hit)\n", elapsed)
+            format!(
+                "trace: 0 calls in {}ms (no matching methods hit)\n",
+                elapsed
+            )
         } else {
             let mut out = format!("trace: {} calls, {}ms\n", call_count, elapsed);
 
@@ -2287,17 +2287,16 @@ impl RequestHandler {
                     .unwrap_or_else(|| format!("0x{:x}", call.class_id));
 
                 // Resolve method name
-                let method_name = if let Ok(methods) =
-                    session.connection.get_methods(call.class_id).await
-                {
-                    methods
-                        .iter()
-                        .find(|m| m.method_id == call.method_id)
-                        .map(|m| m.name.clone())
-                        .unwrap_or_else(|| format!("0x{:x}", call.method_id))
-                } else {
-                    format!("0x{:x}", call.method_id)
-                };
+                let method_name =
+                    if let Ok(methods) = session.connection.get_methods(call.class_id).await {
+                        methods
+                            .iter()
+                            .find(|m| m.method_id == call.method_id)
+                            .map(|m| m.name.clone())
+                            .unwrap_or_else(|| format!("0x{:x}", call.method_id))
+                    } else {
+                        format!("0x{:x}", call.method_id)
+                    };
 
                 let result_suffix = match &call.result {
                     crate::session::TraceResult::Returned(Some(v)) => format!(" -> {}", v),
@@ -2306,7 +2305,11 @@ impl RequestHandler {
                 };
                 out.push_str(&format!(
                     "#{} {}{}.{}{}\n",
-                    idx + 1, indent, class_name, method_name, result_suffix
+                    idx + 1,
+                    indent,
+                    class_name,
+                    method_name,
+                    result_suffix
                 ));
             }
             if truncated {
