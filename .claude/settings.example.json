@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allowedTools": [
+      "mcp__jdwp__*"
+    ]
+  },
+  "env": {
+    "JDWP_MCP_UPDATE_CHECK": "true"
+  }
+}

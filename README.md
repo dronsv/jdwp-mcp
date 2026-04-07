@@ -99,15 +99,75 @@ java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar a
 Attach to localhost:5005 and set a breakpoint at com.example.MyService line 42
 ```
 
-## First prompts
+### 5. Auto-approve (optional)
 
+Debugging involves many rapid tool calls. Auto-approve eliminates confirm prompts:
+
+```bash
+# Allow all jdwp tools for this project
+claude config set --project allowedTools 'mcp__jdwp__*'
+```
+
+<details>
+<summary>User-scope (all projects)</summary>
+
+```bash
+claude config set allowedTools 'mcp__jdwp__*'
+```
+
+Only enable for projects you trust — jdwp tools can pause threads, modify variables, and invoke methods on the target JVM.
+
+</details>
+
+## Prompt packs
+
+Pick the pack that matches your situation:
+
+**App hangs or is slow**
 ```
 Attach to localhost:5005
-List all threads and show which are blocked
-Set a breakpoint at com.example.MyController line 65
-When the breakpoint hits, show the stack and all variables
-Pause the JVM and find threads waiting on locks
+Pause the JVM and find all blocked or waiting threads
+Show the stack for the blocked thread with variables
+Who holds the lock? Show their stack too
 ```
+
+**Exception in logs**
+```
+Attach to localhost:5005
+Set an exception breakpoint for NullPointerException
+Wait for the exception to fire
+Show the stack and all local variables at the throw site
+```
+
+**Need to understand a code path**
+```
+Attach to localhost:5005
+Trace method calls on com.example.service
+[send your HTTP request]
+Show the trace result — which methods were called?
+```
+
+**Breakpoint-driven debugging**
+```
+Attach to localhost:5005
+Find classes matching UserService
+List methods of UserService with line numbers
+Set a breakpoint at UserService line 45
+When it hits, show the stack with all variables
+Step over to the next line
+```
+
+## Claude Code commands
+
+If you clone this repo, you get ready-made slash commands:
+
+- `/investigate-hang` — diagnose a hanging JVM (pause, find blocked threads, trace locks)
+- `/investigate-exception` — catch a live exception and inspect the throw site
+- `/trace-request` — trace which methods a request passes through
+
+And an autonomous investigator agent (`.claude/agents/jdwp-investigator.md`) that can be spawned to diagnose hangs, deadlocks, exceptions, and unexpected code paths.
+
+See `.claude/settings.example.json` for recommended auto-approve and update-check config.
 
 ## Best first use cases
 
