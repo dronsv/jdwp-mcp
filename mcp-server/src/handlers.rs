@@ -429,6 +429,10 @@ impl RequestHandler {
                                     Self::collect_trace_events(&session_manager, &event_set).await;
 
                                 if is_trace_event {
+                                    // If tracing with EventThread suspend, resume the JVM
+                                    if event_set.suspend_policy > 0 {
+                                        let _ = connection_clone.clone().resume_all().await;
+                                    }
                                     continue;
                                 }
 
@@ -1409,11 +1413,21 @@ impl RequestHandler {
         let wait_result =
             tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
                 loop {
-                    notify.notified().await;
-                    let session = session_guard.lock().await;
-                    if session.last_event_seq > start_seq {
-                        return session.last_event.clone();
+                    // Subscribe BEFORE checking — prevents missed notifications
+                    let future = notify.notified();
+                    tokio::pin!(future);
+                    future.as_mut().enable();
+
+                    // Check if event already arrived
+                    {
+                        let session = session_guard.lock().await;
+                        if session.last_event_seq > start_seq {
+                            return session.last_event.clone();
+                        }
                     }
+
+                    // Wait for notification (subscription was registered before check)
+                    future.await;
                 }
             })
             .await;
@@ -1693,12 +1707,52 @@ impl RequestHandler {
             .map_err(|e| format!("Invoke failed: {}", e))?;
 
         if exception_id != 0 {
-            // Try to get exception message
-            let exc_msg = match session.connection.get_string_value(exception_id).await {
-                Ok(s) => s,
-                Err(_) => format!("exception@0x{:x}", exception_id),
+            // Get exception class name + invoke toString()
+            let exc_class = match session
+                .connection
+                .get_object_reference_type(exception_id)
+                .await
+            {
+                Ok(rt) => Self::get_class_signature(&mut session, rt)
+                    .await
+                    .and_then(|s| Self::signature_to_display_name(&s))
+                    .unwrap_or_else(|| "?".to_string()),
+                Err(_) => "?".to_string(),
             };
-            return Err(format!("threw {}", exc_msg));
+            // Try toString() on the exception for the message
+            let exc_msg = match session
+                .connection
+                .get_object_reference_type(exception_id)
+                .await
+            {
+                Ok(rt) => {
+                    let methods = session.connection.get_methods(rt).await.unwrap_or_default();
+                    if let Some(to_string) = methods
+                        .iter()
+                        .find(|m| m.name == "toString" && m.signature.starts_with("()"))
+                    {
+                        match session
+                            .connection
+                            .invoke_method(
+                                exception_id,
+                                target_thread,
+                                rt,
+                                to_string.method_id,
+                                &[],
+                                true,
+                            )
+                            .await
+                        {
+                            Ok((val, 0)) => Self::format_value_leaf(&mut session, &val).await,
+                            _ => exc_class.clone(),
+                        }
+                    } else {
+                        exc_class.clone()
+                    }
+                }
+                Err(_) => exc_class.clone(),
+            };
+            return Err(format!("threw {}: {}", exc_class, exc_msg));
         }
 
         let formatted = Self::format_value_resolved(&mut session, &return_value).await;
@@ -2150,6 +2204,7 @@ impl RequestHandler {
             if is_entry {
                 let depth = trace.depth_per_thread.entry(thread).or_insert(0);
                 trace.calls.push(crate::session::TraceCall {
+                    thread_id: thread,
                     class_id,
                     method_id,
                     depth: *depth,
@@ -2162,7 +2217,9 @@ impl RequestHandler {
                     *depth -= 1;
                 }
                 if let Some(call) = trace.calls.iter_mut().rev().find(|c| {
-                    c.depth == *depth && matches!(c.result, crate::session::TraceResult::Entry)
+                    c.thread_id == thread
+                        && c.depth == *depth
+                        && matches!(c.result, crate::session::TraceResult::Entry)
                 }) {
                     call.result = crate::session::TraceResult::Returned(None);
                 }

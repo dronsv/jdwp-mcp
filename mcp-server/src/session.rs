@@ -42,6 +42,7 @@ pub struct TraceState {
 
 #[derive(Debug, Clone)]
 pub struct TraceCall {
+    pub thread_id: u64,
     pub class_id: u64,
     pub method_id: u64,
     pub depth: u32,
@@ -144,21 +145,23 @@ impl SessionManager {
     }
 
     pub async fn remove_session(&self, session_id: &str) {
-        let mut state = self.state.lock().await;
+        // Extract session Arc under outer lock, then drop outer lock before inner
+        let session_arc = {
+            let mut state = self.state.lock().await;
+            let arc = state.sessions.remove(session_id);
+            if state.current.as_deref() == Some(session_id) {
+                state.current = None;
+            }
+            arc
+            // outer lock dropped here
+        };
 
-        // Abort the event listener task if it exists
-        if let Some(session_arc) = state.sessions.get(session_id) {
+        // Abort the event listener task without holding outer lock
+        if let Some(session_arc) = session_arc {
             let mut session = session_arc.lock().await;
             if let Some(task) = session.event_listener_task.take() {
                 task.abort();
             }
-        }
-
-        state.sessions.remove(session_id);
-
-        // Clear current if it was this session
-        if state.current.as_deref() == Some(session_id) {
-            state.current = None;
         }
     }
 }

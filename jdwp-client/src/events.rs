@@ -205,7 +205,12 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
                         70 | 73 => 4,                              // float, int
                         68 | 74 => 8,                              // double, long
                         76 | 115 | 116 | 103 | 108 | 99 | 91 => 8, // object types
-                        _ => 0,
+                        _ => {
+                            return Err(JdwpError::Protocol(format!(
+                                "Unknown value tag {} in METHOD_EXIT_WITH_RETURN_VALUE",
+                                value_tag
+                            )));
+                        }
                     };
                     if skip_bytes > 0 {
                         if buf.len() < skip_bytes {
