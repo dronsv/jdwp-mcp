@@ -1685,24 +1685,53 @@ impl RequestHandler {
             .await
             .map_err(|e| format!("Failed to get object type: {}", e))?;
 
-        // Find the method
-        let methods = session
-            .connection
-            .get_methods(ref_type_id)
-            .await
-            .map_err(|e| format!("Failed to get methods: {}", e))?;
+        // Find the method — check the class first, then java.lang.Object for inherited methods
+        let (invoke_class_id, method_id) = {
+            let methods = session
+                .connection
+                .get_methods(ref_type_id)
+                .await
+                .map_err(|e| format!("Failed to get methods: {}", e))?;
 
-        let method = methods
-            .iter()
-            .find(|m| m.name == method_name && m.signature.starts_with("()"))
-            .ok_or_else(|| format!("no zero-arg method '{}' found", method_name))?;
-
-        let method_id = method.method_id;
+            if let Some(m) = methods
+                .iter()
+                .find(|m| m.name == method_name && m.signature.starts_with("()"))
+            {
+                (ref_type_id, m.method_id)
+            } else {
+                // Try java.lang.Object (toString, hashCode, etc. are inherited)
+                let object_classes = session
+                    .connection
+                    .classes_by_signature("Ljava/lang/Object;")
+                    .await
+                    .map_err(|e| format!("Failed to find Object class: {}", e))?;
+                let object_class = object_classes
+                    .first()
+                    .ok_or_else(|| "java.lang.Object not found".to_string())?;
+                let object_methods = session
+                    .connection
+                    .get_methods(object_class.type_id)
+                    .await
+                    .map_err(|e| format!("Failed to get Object methods: {}", e))?;
+                let m = object_methods
+                    .iter()
+                    .find(|m| m.name == method_name && m.signature.starts_with("()"))
+                    .ok_or_else(|| format!("no zero-arg method '{}' found", method_name))?;
+                (object_class.type_id, m.method_id)
+            }
+        };
 
         // Invoke with no args, single-threaded
         let (return_value, exception_id) = session
             .connection
-            .invoke_method(object_id, target_thread, ref_type_id, method_id, &[], true)
+            .invoke_method(
+                object_id,
+                target_thread,
+                invoke_class_id,
+                method_id,
+                &[],
+                true,
+            )
             .await
             .map_err(|e| format!("Invoke failed: {}", e))?;
 
