@@ -1520,21 +1520,41 @@ impl RequestHandler {
             return Ok(format!("{} (no fields)", class_name));
         }
 
-        let field_ids: Vec<_> = fields.iter().map(|f| f.field_id).collect();
-        let values = session
+        // Cap at 20 fields to avoid killing the JDWP connection on large objects
+        const MAX_INSPECT_FIELDS: usize = 20;
+        let capped_fields: Vec<_> = fields.iter().take(MAX_INSPECT_FIELDS).collect();
+        let field_ids: Vec<_> = capped_fields.iter().map(|f| f.field_id).collect();
+        let values = match session
             .connection
             .get_object_values(object_id, field_ids)
             .await
-            .map_err(|e| format!("Failed to get field values: {}", e))?;
+        {
+            Ok(v) => v,
+            Err(e) => {
+                // Fallback: show field names without values
+                let mut output = format!("{} (failed to read values: {})\n", class_name, e);
+                for f in &capped_fields {
+                    output.push_str(&format!("  {}: {}\n", f.name, f.signature));
+                }
+                return Ok(output);
+            }
+        };
 
         let mut output = format!("{} {{\n", class_name);
-        for (field, val) in fields.iter().zip(values.iter()) {
+        for (field, val) in capped_fields.iter().zip(values.iter()) {
             let is_static = field.mod_bits & 0x0008 != 0;
             let prefix = if is_static { "static " } else { "" };
-            let fval = Self::format_value_resolved(&mut session, val).await;
+            // Use leaf format (no recursive resolve) to avoid cascading failures
+            let fval = Self::format_value_leaf(&mut session, val).await;
             output.push_str(&format!(
                 "  {}{}: {} = {}\n",
                 prefix, field.name, field.signature, fval
+            ));
+        }
+        if fields.len() > MAX_INSPECT_FIELDS {
+            output.push_str(&format!(
+                "  ...+{} more fields\n",
+                fields.len() - MAX_INSPECT_FIELDS
             ));
         }
         output.push('}');
