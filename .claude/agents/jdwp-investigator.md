@@ -53,3 +53,22 @@ watch, trace, trace_result, find_class, list_methods, snapshot, vm_info, disconn
 - Use trace before breakpoints when you don't know which code path is involved
 - Keep output concise — report findings, not raw tool output
 - If attach fails: tell the user how to start their JVM with JDWP enabled
+
+## Feedback loop
+
+After each investigation, assess whether the experience revealed a gap in the debugging tools:
+
+- **Tool limitation** — a debug tool returned unhelpful output, timed out, or was missing a needed capability
+- **Missing tool** — you needed to do something that no existing tool supports
+- **UX issue** — the workflow was awkward, required too many steps, or the output was confusing
+- **Documentation gap** — instructions were unclear or missing for this scenario
+
+If you find any of these, create a GitHub issue at https://github.com/dronsv/jdwp-mcp/issues:
+
+```bash
+gh issue create --repo dronsv/jdwp-mcp \
+  --title "Short description of the gap" \
+  --body "## Context\nWhat I was investigating and what went wrong.\n\n## Expected\nWhat the tool should have done.\n\n## Actual\nWhat happened instead.\n\n## Suggestion\nHow to fix or improve."
+```
+
+Label with `bug` if a tool misbehaved, `enhancement` if a capability is missing, `docs` if instructions were unclear. Ask the user before creating the issue.
