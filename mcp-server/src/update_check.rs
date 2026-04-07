@@ -1,16 +1,14 @@
 // Background update checker
 //
-// Checks GitHub for a newer version tag. Non-blocking, runs once on startup.
-// Writes to stderr (via tracing) only if an update is available. Never fails visibly.
-// Caches result for 24h to avoid repeated checks.
+// Opt-in via JDWP_MCP_UPDATE_CHECK=true env var.
+// Tries pip first (works if installed via pip), falls back to git ls-remote.
+// Caches result for 24h. Writes to stderr only if update available.
 
 use std::time::Duration;
 use tracing::info;
 
-const REPO: &str = "dronsv/jdwp-mcp";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Spawn a background check (non-blocking, best-effort)
 pub fn spawn_update_check() {
     tokio::task::spawn_blocking(|| {
         if let Err(e) = check_update() {
@@ -39,30 +37,8 @@ fn check_update() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Fetch latest tag via git ls-remote (works without auth, no TLS library needed)
-    let output = std::process::Command::new("git")
-        .args([
-            "ls-remote",
-            "--tags",
-            "--sort=-v:refname",
-            &format!("https://github.com/{}", REPO),
-        ])
-        .stderr(std::process::Stdio::null())
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let latest = stdout
-        .lines()
-        .filter_map(|line| {
-            let tag = line.rsplit('/').next()?;
-            if tag.starts_with('v') && !tag.contains("^{}") {
-                Some(tag.trim_start_matches('v').to_string())
-            } else {
-                None
-            }
-        })
-        .next()
-        .ok_or("no tags found")?;
+    // Try pip first, then git
+    let latest = fetch_via_pip().or_else(|_| fetch_via_git())?;
 
     // Cache
     let _ = std::fs::create_dir_all(&cache_dir);
@@ -74,6 +50,59 @@ fn check_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Check PyPI via `pip index versions jdwp-mcp`
+fn fetch_via_pip() -> Result<String, Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("pip")
+        .args(["index", "versions", "jdwp-mcp"])
+        .stderr(std::process::Stdio::null())
+        .output()?;
+
+    if !output.status.success() {
+        return Err("pip index failed".into());
+    }
+
+    // Output: "jdwp-mcp (0.3.0)\n  Available versions: 0.3.0, 0.2.2, ..."
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout
+        .lines()
+        .next()
+        .and_then(|line| {
+            let start = line.find('(')?;
+            let end = line.find(')')?;
+            Some(line[start + 1..end].to_string())
+        })
+        .ok_or("could not parse pip output")?;
+
+    Ok(version)
+}
+
+/// Fallback: check GitHub tags via `git ls-remote`
+fn fetch_via_git() -> Result<String, Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("git")
+        .args([
+            "ls-remote",
+            "--tags",
+            "--sort=-v:refname",
+            "https://github.com/dronsv/jdwp-mcp",
+        ])
+        .stderr(std::process::Stdio::null())
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let tag = line.rsplit('/').next()?;
+            if tag.starts_with('v') && !tag.contains("^{}") {
+                Some(tag.trim_start_matches('v').to_string())
+            } else {
+                None
+            }
+        })
+        .next()
+        .ok_or_else(|| "no tags found".into())
 }
 
 fn notify(latest: &str) {
