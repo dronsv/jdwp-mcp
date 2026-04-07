@@ -29,8 +29,10 @@ async fn main() -> Result<()> {
 
     info!("Starting JDWP MCP Server...");
 
-    // Background update check (non-blocking, best-effort)
-    update_check::spawn_update_check();
+    // Background update check (opt-in via env var, non-blocking)
+    if std::env::var("JDWP_MCP_UPDATE_CHECK").unwrap_or_default() == "true" {
+        update_check::spawn_update_check();
+    }
 
     let handler = RequestHandler::new();
 
