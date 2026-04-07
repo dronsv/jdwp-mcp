@@ -113,7 +113,7 @@ impl JdwpConnection {
 
         // Read number of classes
         let classes_count = read_i32(&mut data)?;
-        let mut classes = Vec::with_capacity(classes_count as usize);
+        let mut classes = Vec::with_capacity((classes_count as usize).min(1024));
 
         for _ in 0..classes_count {
             let ref_type_tag = read_u8(&mut data)?;
@@ -142,7 +142,7 @@ impl JdwpConnection {
 
         let mut data = reply.data();
         let classes_count = read_i32(&mut data)?;
-        let mut classes = Vec::with_capacity(classes_count as usize);
+        let mut classes = Vec::with_capacity((classes_count as usize).min(1024));
 
         for _ in 0..classes_count {
             let ref_type_tag = read_u8(&mut data)?;

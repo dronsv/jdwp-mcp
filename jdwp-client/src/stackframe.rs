@@ -5,9 +5,9 @@
 use crate::commands::{command_sets, stack_frame_commands};
 use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
-use crate::reader::{read_u64, read_u8};
+use crate::reader::{read_f32, read_f64, read_i16, read_i64, read_i8, read_u16, read_u64, read_u8};
 use crate::types::{FrameId, ThreadId, Value, ValueData};
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 
 /// Variable slot information for GetValues
@@ -52,7 +52,7 @@ impl JdwpConnection {
 
         // Read number of values (should match slots.len())
         let values_count = crate::reader::read_i32(&mut data)?;
-        let mut values = Vec::with_capacity(values_count as usize);
+        let mut values = Vec::with_capacity((values_count as usize).min(1024));
 
         for _ in 0..values_count {
             let tag = read_u8(&mut data)?;
@@ -68,25 +68,25 @@ impl JdwpConnection {
     }
 }
 
-/// Read a value based on its type tag
+/// Read a value based on its type tag (bounds-checked)
 fn read_value_by_tag(tag: u8, buf: &mut &[u8]) -> JdwpResult<ValueData> {
     match tag {
         // 'B' = byte
-        66 => Ok(ValueData::Byte(buf.get_i8())),
+        66 => Ok(ValueData::Byte(read_i8(buf)?)),
         // 'C' = char
-        67 => Ok(ValueData::Char(buf.get_u16())),
+        67 => Ok(ValueData::Char(read_u16(buf)?)),
         // 'D' = double
-        68 => Ok(ValueData::Double(buf.get_f64())),
+        68 => Ok(ValueData::Double(read_f64(buf)?)),
         // 'F' = float
-        70 => Ok(ValueData::Float(buf.get_f32())),
+        70 => Ok(ValueData::Float(read_f32(buf)?)),
         // 'I' = int
-        73 => Ok(ValueData::Int(buf.get_i32())),
+        73 => Ok(ValueData::Int(crate::reader::read_i32(buf)?)),
         // 'J' = long
-        74 => Ok(ValueData::Long(buf.get_i64())),
+        74 => Ok(ValueData::Long(read_i64(buf)?)),
         // 'S' = short
-        83 => Ok(ValueData::Short(buf.get_i16())),
+        83 => Ok(ValueData::Short(read_i16(buf)?)),
         // 'Z' = boolean
-        90 => Ok(ValueData::Boolean(buf.get_u8() != 0)),
+        90 => Ok(ValueData::Boolean(read_u8(buf)? != 0)),
         // 'V' = void
         86 => Ok(ValueData::Void),
         // Object types (L, s, t, g, l, c, [)

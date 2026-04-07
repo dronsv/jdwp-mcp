@@ -59,3 +59,51 @@ pub fn read_u64(buf: &mut &[u8]) -> JdwpResult<u64> {
     }
     Ok(buf.get_u64())
 }
+
+/// Read an i8
+pub fn read_i8(buf: &mut &[u8]) -> JdwpResult<i8> {
+    if buf.remaining() < 1 {
+        return Err(JdwpError::Protocol("Not enough data for i8".to_string()));
+    }
+    Ok(buf.get_i8())
+}
+
+/// Read a u16
+pub fn read_u16(buf: &mut &[u8]) -> JdwpResult<u16> {
+    if buf.remaining() < 2 {
+        return Err(JdwpError::Protocol("Not enough data for u16".to_string()));
+    }
+    Ok(buf.get_u16())
+}
+
+/// Read an i16
+pub fn read_i16(buf: &mut &[u8]) -> JdwpResult<i16> {
+    if buf.remaining() < 2 {
+        return Err(JdwpError::Protocol("Not enough data for i16".to_string()));
+    }
+    Ok(buf.get_i16())
+}
+
+/// Read an i32 (signed)
+pub fn read_i64(buf: &mut &[u8]) -> JdwpResult<i64> {
+    if buf.remaining() < 8 {
+        return Err(JdwpError::Protocol("Not enough data for i64".to_string()));
+    }
+    Ok(buf.get_i64())
+}
+
+/// Read an f32
+pub fn read_f32(buf: &mut &[u8]) -> JdwpResult<f32> {
+    if buf.remaining() < 4 {
+        return Err(JdwpError::Protocol("Not enough data for f32".to_string()));
+    }
+    Ok(buf.get_f32())
+}
+
+/// Read an f64
+pub fn read_f64(buf: &mut &[u8]) -> JdwpResult<f64> {
+    if buf.remaining() < 8 {
+        return Err(JdwpError::Protocol("Not enough data for f64".to_string()));
+    }
+    Ok(buf.get_f64())
+}

@@ -1,6 +1,4 @@
 // Debug tools schema definitions
-//
-// MCP tools for JDWP debugging operations
 
 use crate::protocol::Tool;
 use serde_json::json;
@@ -9,235 +7,180 @@ pub fn get_tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "debug.attach".to_string(),
-            description: "Connect to a JVM via JDWP protocol".to_string(),
+            description: "Connect to JVM via JDWP".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "host": {
-                        "type": "string",
-                        "description": "JVM host (e.g., 'localhost')",
-                        "default": "localhost"
-                    },
-                    "port": {
-                        "type": "integer",
-                        "description": "JDWP port (e.g., 5005)",
-                        "default": 5005
-                    },
-                    "timeout_ms": {
-                        "type": "integer",
-                        "description": "Connection timeout in milliseconds",
-                        "default": 5000
-                    },
-                    "allow_remote": {
-                        "type": "boolean",
-                        "description": "Allow attaching to a non-localhost host",
-                        "default": false
-                    }
+                    "host": { "type": "string", "default": "localhost" },
+                    "port": { "type": "integer", "default": 5005 },
+                    "timeout_ms": { "type": "integer", "default": 5000 },
+                    "allow_remote": { "type": "boolean", "default": false }
                 },
                 "required": ["host", "port"]
             }),
         },
         Tool {
             name: "debug.set_breakpoint".to_string(),
-            description: "Set a breakpoint at a specific location".to_string(),
+            description: "Set breakpoint at class:line".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "class_pattern": {
-                        "type": "string",
-                        "description": "Class name pattern (e.g., 'com.example.MyClass')"
-                    },
-                    "line": {
-                        "type": "integer",
-                        "description": "Line number"
-                    },
-                    "method": {
-                        "type": "string",
-                        "description": "Method name (optional, helps resolve ambiguity)"
-                    }
+                    "class_pattern": { "type": "string", "description": "e.g. com.example.MyClass" },
+                    "line": { "type": "integer" },
+                    "method": { "type": "string", "description": "optional, disambiguates" }
                 },
                 "required": ["class_pattern", "line"]
             }),
         },
         Tool {
             name: "debug.list_breakpoints".to_string(),
-            description: "List all active breakpoints".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            description: "List active breakpoints".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
             name: "debug.clear_breakpoint".to_string(),
-            description: "Clear a specific breakpoint".to_string(),
+            description: "Remove a breakpoint by ID".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "breakpoint_id": {
-                        "type": "string",
-                        "description": "Breakpoint ID from list_breakpoints"
-                    }
+                    "breakpoint_id": { "type": "string" }
                 },
                 "required": ["breakpoint_id"]
             }),
         },
         Tool {
             name: "debug.continue".to_string(),
-            description: "Resume execution for all threads".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            description: "Resume all threads".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
             name: "debug.step_into".to_string(),
-            description: "Step into the next source line on a thread".to_string(),
+            description: "Step into next line".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or selected thread)"
-                    }
+                    "thread_id": { "type": "string", "description": "hex e.g. 0x1a2b, optional" }
                 }
             }),
         },
         Tool {
             name: "debug.step_over".to_string(),
-            description: "Step over the next source line on a thread".to_string(),
+            description: "Step over next line".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or selected thread)"
-                    }
+                    "thread_id": { "type": "string", "description": "hex e.g. 0x1a2b, optional" }
                 }
             }),
         },
         Tool {
             name: "debug.step_out".to_string(),
-            description: "Step out of the current frame on a thread".to_string(),
+            description: "Step out of current frame".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or selected thread)"
-                    }
+                    "thread_id": { "type": "string", "description": "hex e.g. 0x1a2b, optional" }
                 }
             }),
         },
         Tool {
             name: "debug.get_stack".to_string(),
-            description: "Get stack frames with summarized variables".to_string(),
+            description: "Get stack frames with variables".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID"
-                    },
-                    "max_frames": {
-                        "type": "integer",
-                        "description": "Maximum number of frames to return",
-                        "default": 20
-                    },
-                    "include_variables": {
-                        "type": "boolean",
-                        "description": "Include local variables in frames",
-                        "default": true
-                    },
-                    "max_variable_depth": {
-                        "type": "integer",
-                        "description": "How deep to traverse object graphs (1-3)",
-                        "default": 2
-                    }
+                    "thread_id": { "type": "string" },
+                    "max_frames": { "type": "integer", "default": 20 },
+                    "include_variables": { "type": "boolean", "default": true },
+                    "max_variable_depth": { "type": "integer", "default": 2 }
                 }
             }),
         },
         Tool {
             name: "debug.get_variable".to_string(),
-            description: "Get a single local variable by name from a stack frame".to_string(),
+            description: "Read one local variable by name".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Local variable name"
-                    },
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID in hex form like 0x1a2b (optional; defaults to last event thread or first thread)"
-                    },
-                    "frame_index": {
-                        "type": "integer",
-                        "description": "Stack frame index (0 = current frame)",
-                        "default": 0
-                    }
+                    "name": { "type": "string" },
+                    "thread_id": { "type": "string", "description": "hex, optional" },
+                    "frame_index": { "type": "integer", "default": 0 }
                 },
                 "required": ["name"]
             }),
         },
         Tool {
             name: "debug.select_thread".to_string(),
-            description: "Select a default thread for subsequent stack and variable inspection"
-                .to_string(),
+            description: "Set default thread for inspection".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Thread ID in hex form like 0x1a2b"
-                    }
+                    "thread_id": { "type": "string", "description": "hex e.g. 0x1a2b" }
                 },
                 "required": ["thread_id"]
             }),
         },
         Tool {
             name: "debug.list_threads".to_string(),
-            description: "List all threads with status".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            description: "List all threads".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
             name: "debug.pause".to_string(),
-            description: "Pause execution for all threads".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            description: "Suspend all threads".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
             name: "debug.disconnect".to_string(),
-            description: "Disconnect from JVM debug session".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            description: "End debug session".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
             name: "debug.get_last_event".to_string(),
-            description: "Get the last breakpoint/event received with thread ID".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
+            description: "Show last breakpoint/step event".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
         },
         Tool {
             name: "debug.wait_for_event".to_string(),
-            description: "Wait for the next breakpoint/event or time out".to_string(),
+            description: "Wait for next event with timeout".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "timeout_ms": {
-                        "type": "integer",
-                        "description": "Maximum time to wait in milliseconds",
-                        "default": 30000
-                    }
+                    "timeout_ms": { "type": "integer", "default": 30000 }
                 }
+            }),
+        },
+        Tool {
+            name: "debug.inspect".to_string(),
+            description: "Inspect object fields by object ID".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_id": { "type": "string", "description": "hex e.g. 0x1a3f" }
+                },
+                "required": ["object_id"]
+            }),
+        },
+        Tool {
+            name: "debug.find_class".to_string(),
+            description: "Search loaded classes by name pattern".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "e.g. UserService or com.example.User" }
+                },
+                "required": ["pattern"]
+            }),
+        },
+        Tool {
+            name: "debug.list_methods".to_string(),
+            description: "List methods of a class with line ranges".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "class_pattern": { "type": "string", "description": "e.g. com.example.MyClass" }
+                },
+                "required": ["class_pattern"]
             }),
         },
     ]

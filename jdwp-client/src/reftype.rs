@@ -69,7 +69,7 @@ impl JdwpConnection {
 
         // Read number of methods
         let methods_count = read_i32(&mut data)?;
-        let mut methods = Vec::with_capacity(methods_count as usize);
+        let mut methods = Vec::with_capacity((methods_count as usize).min(1024));
 
         for _ in 0..methods_count {
             let method_id = read_u64(&mut data)?;
@@ -121,7 +121,7 @@ impl JdwpConnection {
 
         // Read number of fields
         let fields_count = read_i32(&mut data)?;
-        let mut fields = Vec::with_capacity(fields_count as usize);
+        let mut fields = Vec::with_capacity((fields_count as usize).min(1024));
 
         for _ in 0..fields_count {
             let field_id = read_u64(&mut data)?;

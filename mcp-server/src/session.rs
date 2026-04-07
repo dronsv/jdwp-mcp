@@ -50,17 +50,23 @@ pub struct StepRequestInfo {
     pub depth: String,
 }
 
+struct SessionState {
+    sessions: HashMap<SessionId, Arc<Mutex<DebugSession>>>,
+    current: Option<SessionId>,
+}
+
 #[derive(Clone)]
 pub struct SessionManager {
-    sessions: Arc<Mutex<HashMap<SessionId, Arc<Mutex<DebugSession>>>>>,
-    current_session: Arc<Mutex<Option<SessionId>>>,
+    state: Arc<Mutex<SessionState>>,
 }
 
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            current_session: Arc::new(Mutex::new(None)),
+            state: Arc::new(Mutex::new(SessionState {
+                sessions: HashMap::new(),
+                current: None,
+            })),
         }
     }
 
@@ -79,48 +85,42 @@ impl SessionManager {
             event_listener_task: None,
         };
 
-        let mut sessions = self.sessions.lock().await;
-        sessions.insert(session_id.clone(), Arc::new(Mutex::new(session)));
-
-        // Set as current session
-        let mut current = self.current_session.lock().await;
-        *current = Some(session_id.clone());
+        let mut state = self.state.lock().await;
+        state
+            .sessions
+            .insert(session_id.clone(), Arc::new(Mutex::new(session)));
+        state.current = Some(session_id.clone());
 
         session_id
     }
 
     pub async fn get_current_session(&self) -> Option<Arc<Mutex<DebugSession>>> {
-        let current = self.current_session.lock().await;
-        if let Some(session_id) = current.as_ref() {
-            let sessions = self.sessions.lock().await;
-            sessions.get(session_id).cloned()
-        } else {
-            None
-        }
+        let state = self.state.lock().await;
+        let session_id = state.current.as_ref()?;
+        state.sessions.get(session_id).cloned()
     }
 
     pub async fn get_current_session_id(&self) -> Option<SessionId> {
-        let current = self.current_session.lock().await;
-        current.clone()
+        let state = self.state.lock().await;
+        state.current.clone()
     }
 
     pub async fn remove_session(&self, session_id: &str) {
-        let mut sessions = self.sessions.lock().await;
+        let mut state = self.state.lock().await;
 
         // Abort the event listener task if it exists
-        if let Some(session_arc) = sessions.get(session_id) {
+        if let Some(session_arc) = state.sessions.get(session_id) {
             let mut session = session_arc.lock().await;
             if let Some(task) = session.event_listener_task.take() {
                 task.abort();
             }
         }
 
-        sessions.remove(session_id);
+        state.sessions.remove(session_id);
 
         // Clear current if it was this session
-        let mut current = self.current_session.lock().await;
-        if current.as_ref() == Some(&session_id.to_string()) {
-            *current = None;
+        if state.current.as_deref() == Some(session_id) {
+            state.current = None;
         }
     }
 }

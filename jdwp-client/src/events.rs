@@ -4,7 +4,7 @@
 
 use crate::commands::event_kinds;
 use crate::protocol::{JdwpError, JdwpResult};
-use crate::reader::{read_i32, read_u64, read_u8};
+use crate::reader::{read_i32, read_string, read_u64, read_u8};
 use crate::types::*;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -106,7 +106,7 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
     // Read number of events
     let event_count = read_i32(&mut buf)?;
 
-    let mut events = Vec::with_capacity(event_count as usize);
+    let mut events = Vec::with_capacity((event_count as usize).min(64));
 
     for _ in 0..event_count {
         let kind = read_u8(&mut buf)?;
@@ -136,9 +136,77 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
                 let thread = read_u64(&mut buf)?;
                 EventKind::ThreadDeath { thread }
             }
+            event_kinds::CLASS_PREPARE => {
+                let thread = read_u64(&mut buf)?;
+                let _ref_type_tag = read_u8(&mut buf)?;
+                let ref_type = read_u64(&mut buf)?;
+                let signature = read_string(&mut buf)?;
+                let status = read_i32(&mut buf)?;
+                EventKind::ClassPrepare {
+                    thread,
+                    ref_type,
+                    signature,
+                    status,
+                }
+            }
+            event_kinds::EXCEPTION => {
+                let thread = read_u64(&mut buf)?;
+                let location = read_location(&mut buf)?;
+                let _exception_tag = read_u8(&mut buf)?;
+                let exception = read_u64(&mut buf)?;
+                let catch_location = read_location(&mut buf)?;
+                let catch_location = if catch_location.class_id == 0
+                    && catch_location.method_id == 0
+                    && catch_location.index == 0
+                {
+                    None
+                } else {
+                    Some(catch_location)
+                };
+                EventKind::Exception {
+                    thread,
+                    location,
+                    exception,
+                    catch_location,
+                }
+            }
+            event_kinds::METHOD_ENTRY => {
+                let thread = read_u64(&mut buf)?;
+                let location = read_location(&mut buf)?;
+                EventKind::MethodEntry { thread, location }
+            }
+            event_kinds::METHOD_EXIT | event_kinds::METHOD_EXIT_WITH_RETURN_VALUE => {
+                let thread = read_u64(&mut buf)?;
+                let location = read_location(&mut buf)?;
+                // METHOD_EXIT_WITH_RETURN_VALUE has an extra tagged value;
+                // skip it by reading tag + value bytes
+                if kind == event_kinds::METHOD_EXIT_WITH_RETURN_VALUE {
+                    let value_tag = read_u8(&mut buf)?;
+                    // Skip the value data based on tag size
+                    let skip_bytes: usize = match value_tag {
+                        86 => 0,                                        // void
+                        66 | 90 => 1,                                   // byte, boolean
+                        67 | 83 => 2,                                   // char, short
+                        70 | 73 => 4,                                   // float, int
+                        68 | 74 => 8,                                   // double, long
+                        76 | 115 | 116 | 103 | 108 | 99 | 91 => 8,     // object types
+                        _ => 0,
+                    };
+                    if skip_bytes > 0 {
+                        if buf.len() < skip_bytes {
+                            return Err(JdwpError::Protocol(
+                                "Not enough data for method exit return value".to_string(),
+                            ));
+                        }
+                        buf = &buf[skip_bytes..];
+                    }
+                }
+                EventKind::MethodExit { thread, location }
+            }
             _ => {
-                warn!("Unsupported event kind: {}", kind);
-                EventKind::Unknown { kind }
+                warn!("Unsupported event kind: {}, cannot parse remaining events in composite packet", kind);
+                // Cannot safely continue — we don't know how many bytes this event occupies
+                break;
             }
         };
 

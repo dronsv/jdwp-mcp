@@ -43,7 +43,7 @@ impl JdwpConnection {
 
         // Read number of frames
         let frames_count = read_i32(&mut data)?;
-        let mut frames = Vec::with_capacity(frames_count as usize);
+        let mut frames = Vec::with_capacity((frames_count as usize).min(1024));
 
         for _ in 0..frames_count {
             let frame_id = read_u64(&mut data)?;
@@ -83,7 +83,7 @@ impl JdwpConnection {
         let mut data = reply.data();
 
         let threads_count = read_i32(&mut data)?;
-        let mut threads = Vec::with_capacity(threads_count as usize);
+        let mut threads = Vec::with_capacity((threads_count as usize).min(1024));
 
         for _ in 0..threads_count {
             threads.push(read_u64(&mut data)?);

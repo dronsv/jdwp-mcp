@@ -51,7 +51,7 @@ impl JdwpConnection {
 
         // Read line table entries
         let lines_count = read_i32(&mut data)?;
-        let mut lines = Vec::with_capacity(lines_count as usize);
+        let mut lines = Vec::with_capacity((lines_count as usize).min(1024));
 
         for _ in 0..lines_count {
             let line_code_index = read_u64(&mut data)?;
@@ -91,7 +91,7 @@ impl JdwpConnection {
 
         // Read variables
         let vars_count = read_i32(&mut data)?;
-        let mut variables = Vec::with_capacity(vars_count as usize);
+        let mut variables = Vec::with_capacity((vars_count as usize).min(1024));
 
         for _ in 0..vars_count {
             let code_index = read_u64(&mut data)?;

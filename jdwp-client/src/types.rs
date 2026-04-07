@@ -95,7 +95,7 @@ pub enum ValueData {
 }
 
 impl Value {
-    /// Format value for display
+    /// Format value for display (verbose, with type prefix)
     pub fn format(&self) -> String {
         match &self.data {
             ValueData::Byte(v) => format!("(byte) {}", v),
@@ -114,6 +114,28 @@ impl Value {
                 }
             }
             ValueData::Void => "(void)".to_string(),
+        }
+    }
+
+    /// Compact format — value only, no type prefix (saves tokens)
+    pub fn format_compact(&self) -> String {
+        match &self.data {
+            ValueData::Byte(v) => v.to_string(),
+            ValueData::Char(v) => format!("'{}'", char::from_u32(*v as u32).unwrap_or('?')),
+            ValueData::Float(v) => format!("{}f", v),
+            ValueData::Double(v) => format!("{}d", v),
+            ValueData::Int(v) => v.to_string(),
+            ValueData::Long(v) => format!("{}L", v),
+            ValueData::Short(v) => v.to_string(),
+            ValueData::Boolean(v) => if *v { "true" } else { "false" }.to_string(),
+            ValueData::Object(id) => {
+                if *id == 0 {
+                    "null".to_string()
+                } else {
+                    format!("@{:x}", id)
+                }
+            }
+            ValueData::Void => "void".to_string(),
         }
     }
 }

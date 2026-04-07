@@ -67,18 +67,21 @@ impl CommandPacket {
         }
     }
 
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> JdwpResult<Vec<u8>> {
         let length = HEADER_SIZE + self.data.len();
+        let length_u32 = u32::try_from(length).map_err(|_| {
+            JdwpError::Protocol(format!("Packet too large to encode: {} bytes", length))
+        })?;
         let mut buf = BytesMut::with_capacity(length);
 
-        buf.put_u32(length as u32);
+        buf.put_u32(length_u32);
         buf.put_u32(self.id);
         buf.put_u8(0x00); // command flag
         buf.put_u8(self.command_set);
         buf.put_u8(self.command);
         buf.put_slice(&self.data);
 
-        buf.to_vec()
+        Ok(buf.to_vec())
     }
 }
 
@@ -198,7 +201,7 @@ mod tests {
     #[test]
     fn test_command_packet_encode() {
         let packet = CommandPacket::new(1, 1, 1);
-        let encoded = packet.encode();
+        let encoded = packet.encode().unwrap();
 
         assert_eq!(encoded.len(), HEADER_SIZE);
         assert_eq!(&encoded[0..4], &[0, 0, 0, 11]); // length (big-endian)
@@ -213,7 +216,7 @@ mod tests {
         // Verify we're using big-endian (network byte order)
         // This test ensures architecture independence (Intel vs ARM M1/M2/M3)
         let packet = CommandPacket::new(0x12345678, 1, 1);
-        let encoded = packet.encode();
+        let encoded = packet.encode().unwrap();
 
         // ID should be encoded as big-endian: 0x12345678
         assert_eq!(&encoded[4..8], &[0x12, 0x34, 0x56, 0x78]);

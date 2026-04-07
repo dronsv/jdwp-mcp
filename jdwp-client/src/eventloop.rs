@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 use tracing::{debug, error, info, warn};
 
 /// Maximum allowed JDWP packet size (10MB)
@@ -56,6 +56,7 @@ pub struct CommandRequest {
 pub struct EventLoopHandle {
     command_tx: mpsc::Sender<CommandRequest>,
     event_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<EventSet>>>,
+    event_notify: Arc<Notify>,
 }
 
 impl EventLoopHandle {
@@ -75,31 +76,52 @@ impl EventLoopHandle {
             .map_err(|_| JdwpError::Protocol("Reply channel closed".to_string()))?
     }
 
-    /// Try to receive an event (non-blocking)
+    /// Try to receive an event (non-blocking).
+    /// Returns `None` immediately if no events are available.
     pub async fn try_recv_event(&self) -> Option<EventSet> {
         let mut rx = self.event_rx.lock().await;
         rx.try_recv().ok()
     }
 
-    /// Wait for the next event (blocking)
+    /// Wait for the next event (blocking).
+    /// Does not hold the channel lock across the await point, so concurrent
+    /// `try_recv_event` calls will not be blocked.
     pub async fn recv_event(&self) -> Option<EventSet> {
-        let mut rx = self.event_rx.lock().await;
-        rx.recv().await
+        loop {
+            // Brief lock to attempt a receive
+            {
+                let mut rx = self.event_rx.lock().await;
+                match rx.try_recv() {
+                    Ok(event) => return Some(event),
+                    Err(mpsc::error::TryRecvError::Disconnected) => return None,
+                    Err(mpsc::error::TryRecvError::Empty) => {}
+                }
+            }
+            // Lock released — wait for notification that a new event was enqueued
+            self.event_notify.notified().await;
+        }
     }
 }
 
 /// Start the event loop task
 pub fn spawn_event_loop(reader: OwnedReadHalf, writer: OwnedWriteHalf) -> EventLoopHandle {
     let (command_tx, command_rx) = mpsc::channel(32);
-    // Use larger buffer for events to avoid loss under load
-    // Events are critical (breakpoints, exceptions) and shouldn't be dropped
     let (event_tx, event_rx) = mpsc::channel(256);
+    let event_notify = Arc::new(Notify::new());
 
-    tokio::spawn(event_loop_task(reader, writer, command_rx, event_tx));
+    let notify_clone = event_notify.clone();
+    tokio::spawn(event_loop_task(
+        reader,
+        writer,
+        command_rx,
+        event_tx,
+        notify_clone,
+    ));
 
     EventLoopHandle {
         command_tx,
         event_rx: Arc::new(tokio::sync::Mutex::new(event_rx)),
+        event_notify,
     }
 }
 
@@ -115,6 +137,7 @@ async fn event_loop_task(
     mut writer: OwnedWriteHalf,
     mut command_rx: mpsc::Receiver<CommandRequest>,
     event_tx: mpsc::Sender<EventSet>,
+    event_notify: Arc<Notify>,
 ) {
     info!("Event loop started");
 
@@ -128,7 +151,13 @@ async fn event_loop_task(
                 let packet_id = cmd.packet.id;
                 debug!("Sending command id={}", packet_id);
 
-                let encoded = cmd.packet.encode();
+                let encoded = match cmd.packet.encode() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        cmd.reply_tx.send(Err(e)).ok();
+                        continue;
+                    }
+                };
                 if let Err(e) = writer.write_all(&encoded).await {
                     error!("Failed to write command: {}", e);
                     cmd.reply_tx.send(Err(JdwpError::Io(e))).ok();
@@ -203,17 +232,13 @@ async fn event_loop_task(
                                     info!("Parsed event set: {} events, suspend_policy={}",
                                           event_set.events.len(), event_set.suspend_policy);
 
-                                    // Send event without blocking to avoid deadlock
-                                    // If consumer is sending commands while we're reading, blocking here would deadlock
-                                    match event_tx.try_send(event_set) {
-                                        Ok(_) => {},
-                                        Err(mpsc::error::TrySendError::Full(dropped_event)) => {
-                                            // Event channel is full - this is critical
-                                            error!("Event channel full ({} buffered), dropping event with {} events. Consumer not keeping up!",
-                                                  event_tx.capacity(), dropped_event.events.len());
-                                            // TODO: Consider adding backpressure or alerting mechanism
+                                    // Send event with backpressure — blocks if channel is full,
+                                    // which is correct for a debugger (events must not be lost)
+                                    match event_tx.send(event_set).await {
+                                        Ok(_) => {
+                                            event_notify.notify_waiters();
                                         }
-                                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        Err(_) => {
                                             info!("Event receiver dropped, shutting down event loop");
                                             break;
                                         }
