@@ -126,6 +126,11 @@ Pause the JVM and find threads waiting on locks
 - Always-on production observability
 - Environments where JDWP attach or thread pausing is operationally unsafe
 
+## Deploy scenarios
+
+See [docs/deploy.md](docs/deploy.md) for setup with Maven, Gradle, Tomcat, Docker,
+Kubernetes (port-forward), and SSH tunnels.
+
 ## Operational note
 
 JDWP changes runtime behavior. Pausing threads and setting breakpoints may be
