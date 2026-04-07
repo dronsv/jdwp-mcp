@@ -46,6 +46,13 @@ KEY TIPS:
 - debug.inspect shows all fields of an object by hex ID (from stack output @hex references)
 - Always debug.disconnect when done to release the JVM
 
+DEBUGGING APP STARTUP (suspend=y):
+If you need to debug code that runs during initialization, start the JVM with suspend=y:
+  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005 -jar app.jar
+The JVM will freeze immediately and wait for a debugger. Then:
+  debug.attach → debug.set_breakpoint (set breakpoints before any code runs) → debug.continue (JVM starts)
+Use this when the bug happens during startup and you can't set breakpoints fast enough with suspend=n.
+
 COMMON ERRORS:
 - "Connection refused" → JVM not started with JDWP flags, or wrong port
 - "THREAD_NOT_SUSPENDED" → use debug.pause or hit a breakpoint before debug.eval
