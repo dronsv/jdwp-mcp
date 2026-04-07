@@ -2103,26 +2103,9 @@ impl RequestHandler {
             return false;
         }
 
-        // Phase 2: resolve class names (immutable borrow of class_signatures)
-        let resolved: Vec<(u64, String, u64, bool)> = raw
-            .into_iter()
-            .map(|(thread, class_id, method_id, is_entry)| {
-                let name = if is_entry {
-                    session
-                        .class_signatures
-                        .get(&class_id)
-                        .cloned()
-                        .unwrap_or_else(|| format!("0x{:x}", class_id))
-                } else {
-                    String::new()
-                };
-                (thread, name, method_id, is_entry)
-            })
-            .collect();
-
-        // Phase 3: mutate trace state
+        // Phase 2: mutate trace state (store raw IDs, resolve names at output time)
         let trace = session.trace_state.as_mut().unwrap();
-        for (thread, class_name, method_id, is_entry) in resolved {
+        for (thread, class_id, method_id, is_entry) in raw {
             if trace.calls.len() >= max {
                 trace.active = false;
                 break;
@@ -2130,8 +2113,8 @@ impl RequestHandler {
             if is_entry {
                 let depth = trace.depth_per_thread.entry(thread).or_insert(0);
                 trace.calls.push(crate::session::TraceCall {
-                    class_name,
-                    method_name: format!("0x{:x}", method_id),
+                    class_id,
+                    method_id,
                     depth: *depth,
                     result: crate::session::TraceResult::Entry,
                 });
@@ -2253,10 +2236,30 @@ impl RequestHandler {
             format!("trace: 0 calls in {}ms (no matching methods hit)\n", elapsed)
         } else {
             let mut out = format!("trace: {} calls, {}ms\n", call_count, elapsed);
+
+            // Resolve class and method names
             for (idx, call) in trace.calls.iter().enumerate() {
                 let indent = "  ".repeat(call.depth as usize);
-                let class_short = Self::signature_to_display_name(&call.class_name)
-                    .unwrap_or_else(|| call.class_name.clone());
+
+                // Resolve class name
+                let class_name = Self::get_class_signature(&mut session, call.class_id)
+                    .await
+                    .and_then(|sig| Self::signature_to_display_name(&sig))
+                    .unwrap_or_else(|| format!("0x{:x}", call.class_id));
+
+                // Resolve method name
+                let method_name = if let Ok(methods) =
+                    session.connection.get_methods(call.class_id).await
+                {
+                    methods
+                        .iter()
+                        .find(|m| m.method_id == call.method_id)
+                        .map(|m| m.name.clone())
+                        .unwrap_or_else(|| format!("0x{:x}", call.method_id))
+                } else {
+                    format!("0x{:x}", call.method_id)
+                };
+
                 let result_suffix = match &call.result {
                     crate::session::TraceResult::Returned(Some(v)) => format!(" -> {}", v),
                     crate::session::TraceResult::ThrewException(e) => format!(" -> threw {}", e),
@@ -2264,11 +2267,7 @@ impl RequestHandler {
                 };
                 out.push_str(&format!(
                     "#{} {}{}.{}{}\n",
-                    idx + 1,
-                    indent,
-                    class_short,
-                    call.method_name,
-                    result_suffix
+                    idx + 1, indent, class_name, method_name, result_suffix
                 ));
             }
             if truncated {

@@ -42,8 +42,8 @@ pub struct TraceState {
 
 #[derive(Debug, Clone)]
 pub struct TraceCall {
-    pub class_name: String,
-    pub method_name: String,
+    pub class_id: u64,
+    pub method_id: u64,
     pub depth: u32,
     pub result: TraceResult,
 }
