@@ -139,4 +139,32 @@ impl JdwpConnection {
 
         Ok(fields)
     }
+
+    /// Get interfaces implemented by a reference type (ReferenceType.Interfaces command)
+    pub async fn get_interfaces(
+        &mut self,
+        ref_type_id: ReferenceTypeId,
+    ) -> JdwpResult<Vec<ReferenceTypeId>> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::REFERENCE_TYPE,
+            reference_type_commands::INTERFACES,
+        );
+
+        packet.data.put_u64(ref_type_id);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        let count = read_i32(&mut data)?;
+        let mut interfaces = Vec::with_capacity((count as usize).min(256));
+
+        for _ in 0..count {
+            interfaces.push(crate::reader::read_u64(&mut data)?);
+        }
+
+        Ok(interfaces)
+    }
 }

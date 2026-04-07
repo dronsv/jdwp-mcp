@@ -1719,41 +1719,58 @@ impl RequestHandler {
             .await
             .map_err(|e| format!("Failed to get object type: {}", e))?;
 
-        // Find the method — check the class first, then java.lang.Object for inherited methods
-        let (invoke_class_id, method_id) = {
-            let methods = session
-                .connection
-                .get_methods(ref_type_id)
-                .await
-                .map_err(|e| format!("Failed to get methods: {}", e))?;
-
-            if let Some(m) = methods
-                .iter()
-                .find(|m| m.name == method_name && m.signature.starts_with("()"))
+        // Find the method — search: declared methods → interfaces → superclass chain → Object
+        let (invoke_class_id, method_id) =
             {
-                (ref_type_id, m.method_id)
-            } else {
-                // Try java.lang.Object (toString, hashCode, etc. are inherited)
-                let object_classes = session
-                    .connection
-                    .classes_by_signature("Ljava/lang/Object;")
-                    .await
-                    .map_err(|e| format!("Failed to find Object class: {}", e))?;
-                let object_class = object_classes
-                    .first()
-                    .ok_or_else(|| "java.lang.Object not found".to_string())?;
-                let object_methods = session
-                    .connection
-                    .get_methods(object_class.type_id)
-                    .await
-                    .map_err(|e| format!("Failed to get Object methods: {}", e))?;
-                let m = object_methods
-                    .iter()
-                    .find(|m| m.name == method_name && m.signature.starts_with("()"))
-                    .ok_or_else(|| format!("no zero-arg method '{}' found", method_name))?;
-                (object_class.type_id, m.method_id)
-            }
-        };
+                let mut found = None;
+
+                // 1. Check declared methods on the object's class
+                if let Ok(methods) = session.connection.get_methods(ref_type_id).await {
+                    if let Some(m) = methods
+                        .iter()
+                        .find(|m| m.name == method_name && m.signature.starts_with("()"))
+                    {
+                        found = Some((ref_type_id, m.method_id));
+                    }
+                }
+
+                // 2. Check interfaces (e.g. Map.Entry.getKey)
+                if found.is_none() {
+                    if let Ok(ifaces) = session.connection.get_interfaces(ref_type_id).await {
+                        for iface_id in ifaces {
+                            if let Ok(methods) = session.connection.get_methods(iface_id).await {
+                                if let Some(m) = methods.iter().find(|m| {
+                                    m.name == method_name && m.signature.starts_with("()")
+                                }) {
+                                    found = Some((ref_type_id, m.method_id));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Check java.lang.Object (toString, hashCode, getClass)
+                if found.is_none() {
+                    if let Ok(object_classes) = session
+                        .connection
+                        .classes_by_signature("Ljava/lang/Object;")
+                        .await
+                    {
+                        if let Some(oc) = object_classes.first() {
+                            if let Ok(methods) = session.connection.get_methods(oc.type_id).await {
+                                if let Some(m) = methods.iter().find(|m| {
+                                    m.name == method_name && m.signature.starts_with("()")
+                                }) {
+                                    found = Some((oc.type_id, m.method_id));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                found.ok_or_else(|| format!("no zero-arg method '{}' found", method_name))?
+            };
 
         // Invoke with no args, single-threaded
         let (return_value, exception_id) = session
