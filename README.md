@@ -1,201 +1,160 @@
 # jdwp-mcp
 
-**Java debugging for LLMs via JDWP and Model Context Protocol**
+**Debug live JVMs through JDWP — from any MCP-compatible agent.**
 
-An MCP server that enables Claude Code and other LLM tools to debug Java
-applications through the Java Debug Wire Protocol (JDWP). Attach to running
-JVMs, set breakpoints, inspect variables, and step through code—all through
-natural language.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Features
+Attach to a running Java process, pause threads, inspect stacks and objects,
+set breakpoints, and evaluate state — through natural language.
+Works with Claude Code, Codex, Cursor, or any MCP-compatible agent.
 
-- **Remote Debugging**: Connect to any JVM started with JDWP enabled
-- **Breakpoint Management**: Set, list, and clear breakpoints by class and line
-- **Stack Inspection**: Get summarized stack frames with local variables
-- **Targeted Variable Reads**: Fetch a single local variable by name
-- **Execution Control**: Continue, pause, and breakpoint-driven inspection
-- **Event Waiting**: Block until the next breakpoint/event with timeout
-- **Thread Management**: List threads and select a default inspection thread
-- **Smart Summarization**: Handles large data structures without overwhelming the LLM
+## See it in action
+
+A database query is hanging. Find the root cause:
+
+```
+> Attach to localhost:5005 and find out why a query is stuck.
+```
+
+The agent attaches, pauses all threads, and scans for the problem:
+
+```
+connected localhost:5005
+paused
+24 threads, 2 blocked
+
+Thread pool-3-thread-7 is waiting for a monitor lock:
+#0 RolapResult.loadMembers:142
+  monitor=@3f2a  state=BLOCKED
+#1 RolapResult.execute:89
+
+Lock is held by pool-3-thread-2, which is running:
+#0 SqlStatement.execute:218
+  sql="SELECT ... FROM fact_table"   -- full scan on 36M rows
+
+Root cause: the query bypassed the aggregate table and fell back to
+a full fact-table scan. Thread-7 is waiting for thread-2 to finish.
+```
+
+One prompt. Six tool calls. Lock contention + root cause identified.
 
 ## Quick Start
 
-### 1. Start your Java app with JDWP enabled
+### 1. Install
 
-```bash
-java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar myapp.jar
-```
+Download a pre-built binary from [Releases](https://github.com/navicore/jdwp-mcp/releases).
 
-### 2. Build the MCP server
+Or build from source:
 
 ```bash
 cargo build --release
 ```
 
-### 3. Configure Claude Code
-
-The easiest way to enable the MCP server for your project:
+### 2. Configure your agent
 
 ```bash
-# From your Java project directory
-claude mcp add --scope project jdwp /path/to/jdwp-mcp/target/release/jdwp-mcp
+claude mcp add jdwp /path/to/jdwp-mcp
 ```
 
-Adjust the path to match where you cloned this repository. The `--scope project` flag makes the debugger available only in your current Java project.
-
-**Alternative**: Manual configuration via `.mcp.json`:
+Or add to `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "jdwp": {
-      "command": "/path/to/jdwp-mcp/target/release/jdwp-mcp"
+      "command": "/path/to/jdwp-mcp"
     }
   }
 }
 ```
 
-### 4. Debug with natural language
-
-```
-> Attach to the JVM at localhost:5005
-> Set a breakpoint at com.example.HelloController line 65
-> When it hits, show me the stack and the value of requestCount
-```
-
-## Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `debug.attach` | Connect to JVM via JDWP |
-| `debug.set_breakpoint` | Set breakpoint at class:line |
-| `debug.list_breakpoints` | List active breakpoints |
-| `debug.clear_breakpoint` | Remove a breakpoint |
-| `debug.continue` | Resume execution |
-| `debug.get_stack` | Get stack frames with variables |
-| `debug.get_variable` | Read one local variable by name |
-| `debug.select_thread` | Select the default thread for inspection |
-| `debug.list_threads` | List all threads |
-| `debug.pause` | Pause execution |
-| `debug.disconnect` | End debug session |
-| `debug.get_last_event` | Show the last breakpoint/event |
-| `debug.wait_for_event` | Wait for the next event with timeout |
-
-## Example: Debugging with kubectl port-forward
-
-For Kubernetes-deployed Java apps:
+### 3. Start your Java app with JDWP
 
 ```bash
-# Forward JDWP port from pod
-kubectl port-forward pod/my-app-pod 5005:5005
+java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar app.jar
 ```
 
-Then in Claude Code:
+### 4. Debug
+
 ```
-> Attach to localhost:5005
-> Set a breakpoint in the processRequest method
+Attach to localhost:5005 and set a breakpoint at com.example.MyService line 42
 ```
+
+## First prompts
+
+Copy-paste these to get started:
+
+```
+Attach to localhost:5005
+List all threads and show which are blocked
+Set a breakpoint at com.example.MyController line 65
+When the breakpoint hits, show the stack and all variables
+Pause the JVM and find threads waiting on locks
+```
+
+## Why this instead of jstack or an IDE?
+
+- **Works inside your agent** — no tool switching, no separate debugger window
+- **Combines attach + inspect + reasoning in one loop** — the agent decides what to look at next
+- **Conversational** — describe the problem, the agent runs the debug session
+- **Ground truth for large codebases** — in complex projects with deep framework stacks (Spring, Hibernate, OLAP engines), agents can get lost tracing code paths statically. Live debugging gives the agent actual runtime state instead of guesses — which thread holds the lock, what SQL was generated, what value a variable actually has right now
+
+## Tools
+
+25 tools organized in three groups:
+
+**Connection and control**
+`attach` `disconnect` `pause` `continue` `step_into` `step_over` `step_out`
+
+**Breakpoints and events**
+`set_breakpoint` (with optional conditions) `clear_breakpoint` `list_breakpoints` `exception_breakpoint` `watch` (field modification) `wait_for_event` `get_last_event`
+
+**Inspection and mutation**
+`get_stack` (auto-resolves objects) `get_variable` `inspect` `eval` `set_value` `snapshot` `find_class` `list_methods` `list_threads` `select_thread` `vm_info`
+
+## Use it for
+
+- Hung requests and deadlocks
+- Blocked thread pools
+- Breakpoint-driven diagnosis in running services
+- State inspection when reproducing locally is hard
+- Remote debugging via `kubectl port-forward`
+
+## Don't use it for
+
+- Postmortem heap analysis
+- Always-on production observability
+- Environments where JDWP attach or thread pausing is operationally unsafe
+
+## Operational note
+
+JDWP changes runtime behavior. Pausing threads and setting breakpoints may be
+disruptive. Use carefully in production; prefer staging environments or
+controlled maintenance windows.
+
+## Examples
+
+- [Debugging a hanging query](examples/debugging-a-hang.md) — full walkthrough of diagnosing lock contention and missing aggregate routing
+- [Observability debugging](examples/observability-debugging.md) — investigating Spring Boot ObservationRegistry issues
 
 ## Architecture
 
 ```
-Claude Code → MCP Server → JDWP Client → TCP Socket → JVM
-                ↓
-         Summarization &
-         Context Filtering
+Agent  -->  MCP Server  -->  JDWP Client  -->  TCP  -->  JVM
+              |
+        Translates tool calls to JDWP,
+        tracks session state, summarizes
+        runtime objects for the agent.
 ```
 
-The MCP server handles:
-- **Protocol Translation**: MCP JSON-RPC ↔ JDWP binary protocol
-- **Smart Summarization**: Truncates large objects, limits depth
-- **State Management**: Tracks breakpoints, threads, sessions
+Core crates: `jdwp-client` (JDWP protocol) and `mcp-server` (MCP transport and session management).
 
-## Development
-
-### Project Structure
-
-```
-jdwp-mcp/
-├── jdwp-client/        # JDWP protocol implementation
-│   ├── connection.rs   # TCP + handshake
-│   ├── protocol.rs     # Packet encoding/decoding
-│   ├── commands.rs     # JDWP command constants
-│   ├── types.rs        # JDWP type definitions
-│   └── events.rs       # Event handling
-├── mcp-server/         # MCP server
-│   ├── main.rs         # Stdio transport
-│   ├── protocol.rs     # MCP JSON-RPC
-│   ├── handlers.rs     # Request routing
-│   ├── tools.rs        # Tool definitions
-│   └── session.rs      # Debug session state
-└── examples/           # Usage examples
-```
-
-### Testing
-
-Use the companion [java-example-for-k8s](../java-example-for-k8s) as a test target:
+## Building from source
 
 ```bash
-cd ../java-example-for-k8s
-mvn clean package
-java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 \
-  -jar target/probe-demo-0.0.1-SNAPSHOT.jar
-```
-
-Then test MCP tools against this running app.
-
-### Building
-
-```bash
-# Debug build
-cargo build
-
-# Release build
 cargo build --release
-
-# Run tests
 cargo test
 ```
-
-## Status
-
-🚧 **Usable for local JDWP attach and stack inspection**
-
-### Implemented Features
-- [x] Project structure
-- [x] JDWP protocol (handshake, packets, encoding/decoding)
-- [x] MCP server skeleton with 13 debug tools
-- [x] VirtualMachine commands (Version, IDSizes, AllThreads, Suspend/Resume)
-- [x] ClassesBySignature (find classes by name)
-- [x] ReferenceType.Methods (get method info)
-- [x] Method.LineTable (map source lines to bytecode)
-- [x] Method.VariableTable (get variable metadata)
-- [x] EventRequest.Set (breakpoints with location modifiers)
-- [x] ThreadReference.Frames (get call stacks)
-- [x] StackFrame.GetValues (read variable values)
-- [x] Value formatting and display
-- [x] Architecture independence (big-endian protocol, works on Intel & ARM M1/M2/M3)
-- [x] Localhost-only attach by default
-
-### Working Examples
-- [x] `test_connection` - Basic JDWP handshake
-- [x] `test_vm_commands` - Query JVM version and ID sizes
-- [x] `test_find_class` - Find classes and methods with line tables
-- [x] `test_breakpoint` - Set breakpoints at specific source lines
-- [x] `test_manual_stack` - Suspend and inspect thread stacks with variables
-
-### Next Steps
-- [ ] Event loop for async breakpoint notifications
-- [ ] Stepping commands (step over/into/out)
-- [ ] Expression evaluation
-- [ ] Rich object dereferencing
-- [ ] Harder remote-attach policy and auth story
-
-## References
-
-- [JDWP Specification](https://docs.oracle.com/javase/8/docs/platform/jpda/jdwp/jdwp-protocol.html)
-- [Model Context Protocol](https://modelcontextprotocol.io/)
-- [Claude Code MCP Documentation](https://docs.claude.com/claude-code)
 
 ## License
 

@@ -11,6 +11,11 @@ All examples assume:
 
 ## Examples
 
+### [debugging-a-hang.md](debugging-a-hang.md)
+**Debugging a Hanging OLAP Query** *(Intermediate)*
+
+Walks through diagnosing a Mondrian OLAP engine hang: attaching to the JVM, finding blocked threads, tracing lock contention, and identifying a full table scan caused by missing aggregate table configuration. Shows how 5 tool calls replace manual jstack analysis.
+
 ### [observability-debugging.md](observability-debugging.md)
 **Real-World Spring Boot Debugging** *(Advanced)*
 

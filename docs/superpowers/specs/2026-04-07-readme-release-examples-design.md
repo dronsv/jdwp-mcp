@@ -1,52 +1,93 @@
-# Design: README Rewrite, Release CI, Example Scenarios
+# Design: README Rewrite, Release CI, Example Scenarios (v2)
 
 ## Goal
 
-Make the jdwp-mcp repository compelling for Java developers discovering it through MCP registries or GitHub. A developer should understand the value in 10 seconds, install in 60 seconds, and debug their first issue in 5 minutes.
+Make jdwp-mcp a product landing page, not developer notes. A Java developer should understand the value in 10 seconds, install in 60 seconds, and debug their first issue in 5 minutes.
 
 ## Audience
 
-Java developers who use Claude Code and want to add live debugging capability. They know Java, know what JDWP is conceptually, but don't want to learn a new tool's internals.
+Java developers who use Claude Code. They know Java, know debugging is painful, and want to know: "will this help me or not?"
+
+## Key Principle
+
+README answers "why should I care?" and "how do I start?" — not "what's implemented?"
+
+---
 
 ## Deliverables
 
 ### 1. README.md rewrite
 
-**Structure (top to bottom):**
+**Order of sections:**
 
 ```
 # jdwp-mcp
 
-One-line hook: "Debug Java with natural language"
+Hook: "Debug live JVMs through JDWP — from any MCP-compatible agent."
 
 Badges: build status, license (MIT), latest release
 
-Elevator pitch (3 lines): what it is, what it does, 25 tools, zero UI.
+Elevator pitch (3 lines):
+  Attach to a running Java process, pause threads, inspect stacks and objects,
+  set breakpoints, and evaluate state — through natural language.
+  Works with Claude Code, Codex, Cursor, or any MCP-compatible agent.
 
 ## See it in action
-  Hero example: OLAP query hanging scenario (~8 lines of agent dialogue)
-  Shows: one prompt → agent attaches, pauses, finds stuck thread,
-  identifies lock contention + root cause.
+  Hero scenario: hanging query, one prompt, agent finds root cause.
+  Root cause stated universally: "full fact-table scan instead of aggregate path"
+  (no Mondrian-specific terms in README)
 
 ## Quick Start
   ### 1. Install
-    Option A: curl pre-built binary (linux/mac/win)
-    Option B: cargo install jdwp-mcp
-  ### 2. Configure Claude Code
+    Primary: curl pre-built binary (link to releases)
+    Secondary: cargo install jdwp-mcp (collapsed or below)
+  ### 2. Configure
     claude mcp add jdwp ./jdwp-mcp
-  ### 3. Start Java app with JDWP
-    java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar app.jar
+  ### 3. Start JVM
+    java -agentlib:jdwp=... -jar app.jar
   ### 4. Debug
-    "Attach to localhost:5005 and set a breakpoint at MyService line 42"
+    One prompt example.
+
+  Only actions, no explanations. One path. build-from-source goes to bottom.
+
+## First prompts
+  Copy-paste block of 4-5 ready prompts:
+  - Attach and list threads
+  - Find blocked threads
+  - Set breakpoint at class:line
+  - Inspect variable when breakpoint hits
+  - Pause and get full stack
+
+## Why this instead of jstack / IDE?
+  3 bullets:
+  - Works inside Claude Code — no tool switching
+  - Combines attach + inspect + reasoning in one loop
+  - Conversational: describe the problem, agent runs the debug session
 
 ## Tools
-  Three groups, compact list format (no verbose table):
-  - Connection & Control: attach, disconnect, pause, continue, step_into/over/out
-  - Breakpoints & Events: set_breakpoint (with conditions), exception_breakpoint,
-    watch (field modification), clear_breakpoint, list_breakpoints,
-    wait_for_event, get_last_event
-  - Inspection & Mutation: get_stack (auto-resolves objects), get_variable,
-    inspect, eval, set_value, snapshot, find_class, list_methods, vm_info
+  Three compact groups, one line each:
+  - Connection & control: attach, disconnect, pause, continue, step_into/over/out
+  - Breakpoints & events: set_breakpoint (with conditions), exception_breakpoint,
+    watch, clear_breakpoint, list_breakpoints, wait_for_event, get_last_event
+  - Inspection & mutation: get_stack, get_variable, inspect, eval, set_value,
+    snapshot, find_class, list_methods, vm_info, select_thread, list_threads
+
+## Use it for
+  - Hung requests and deadlocks
+  - Blocked thread pools
+  - Breakpoint-driven diagnosis in running services
+  - State inspection when reproducing locally is hard
+  - Remote debugging via kubectl port-forward
+
+## Don't use it for
+  - Postmortem heap analysis
+  - Always-on observability
+  - Environments where JDWP or thread pausing is operationally unsafe
+
+## Operational note
+  JDWP can change runtime behavior. Pausing threads and setting breakpoints
+  may be disruptive. Use carefully in production; prefer staging or
+  controlled maintenance windows.
 
 ## Examples
   Links to:
@@ -54,128 +95,127 @@ Elevator pitch (3 lines): what it is, what it does, 25 tools, zero UI.
   - examples/observability-debugging.md (existing)
 
 ## Architecture
-  Keep existing ASCII diagram, trim to 3 lines.
+  ASCII diagram + 2 lines max:
+  Claude Code → MCP Server → JDWP Client → JVM
+  Translates tool calls to JDWP, tracks session state,
+  summarizes runtime objects.
 
 ## Building from source
   cargo build --release
+  cargo test
 
 ## License
   MIT
 ```
 
 **What gets removed from current README:**
-- Verbose tool table with per-tool descriptions (replaced by grouped list)
-- "Status" section with checkboxes (project is usable, no need for roadmap in README)
-- Detailed project structure listing (belongs in CLAUDE.md, which already has it)
-- Duplicate Quick Start that's scattered across sections
+- Feature list at the top (replaced by hero example)
+- Status / Implemented Features checklist
+- Project structure tree
+- Verbose per-tool table (replaced by grouped one-liners)
+- Development section details (stays in CLAUDE.md)
 
-**Tone:** Direct, concise, confident. No emoji. No "you can" / "you might want to" — imperative voice.
+**What gets added (not in current README):**
+- Hero scenario
+- Copy-paste prompts
+- "Why this instead of jstack/IDE?"
+- "Use it for / Don't use it for"
+- Operational safety note
+- Binary-first install
 
-### 2. Hero example scenario
+### 2. Hero example: README version
 
-**In README (short version, ~15 lines):**
-
-Based on the Mondrian/eMondrian project context. Scenario: an OLAP query hangs in production.
+Universal framing, no project-specific terms:
 
 ```
-User prompt: "OLAP query is hanging. Attach to localhost:5005 and find out why."
+## See it in action
 
-Agent response shows:
-1. Attaches, pauses all threads
-2. Lists threads, identifies pool-3-thread-7 as stuck
-3. Gets stack trace showing RolapResult.loadMembers blocked on monitor
-4. Identifies: thread-7 waiting on lock held by thread-2
-5. Thread-2 is doing full table scan on 36M-row fact table
-6. Root cause: measure bypassed agg table because DistinctCountMergeFunction not configured
+A database query is hanging. Find the root cause:
+
+> Attach to localhost:5005 and find out why a query is stuck.
+
+Claude attaches, pauses all threads, and scans for the problem:
+
+  connected localhost:5005
+  paused
+  24 threads, 2 blocked
+
+  Thread pool-3-thread-7 is waiting for a monitor lock:
+  #0 RolapResult.loadMembers:142
+    monitor=@3f2a  state=BLOCKED
+  #1 RolapResult.execute:89
+
+  Lock is held by pool-3-thread-2, which is running:
+  #0 SqlStatement.execute:218
+    sql="SELECT ... FROM fact_table"   ← full scan on 36M rows
+
+  Root cause: the query bypassed the aggregate table and fell back to
+  a full fact-table scan. Thread-7 is waiting for thread-2 to finish.
 ```
 
-The key: agent does 5-6 tool calls autonomously from a single prompt. Shows the compound value.
+One prompt. Agent made 6 tool calls. Found lock contention + root cause.
 
 ### 3. Extended example: `examples/debugging-a-hang.md`
 
-Full walkthrough (~60 lines):
+Full walkthrough (~60 lines). Here we use Mondrian-specific context:
 
 ```
-# Debugging a Hanging Query
+# Debugging a Hanging OLAP Query
 
 ## The Problem
-OLAP query via XMLA takes >60 seconds, UI shows spinner.
+MDX query via XMLA endpoint takes >60s. Tomcat thread pool exhausted.
 
-## The Session
-Step-by-step with actual tool calls and responses:
-1. Attach
+## The Session (step by step)
+1. Attach to JVM
 2. Pause all threads
-3. List threads — identify query threads
-4. Select stuck thread
-5. Get stack — see lock contention
-6. Inspect lock object — find holder thread
-7. Get holder's stack — see full table scan
-8. Root cause identified
+3. List threads — find query workers
+4. Select stuck thread, get stack
+5. See: blocked on synchronized in RolapResult.loadMembers
+6. Inspect monitor object — find which thread holds the lock
+7. Get holder's stack — full table scan on mart_konfet_flat (36M rows)
+8. Root cause: DistinctCountMergeFunction not configured,
+   distinct-count measure bypassed agg table matching
 
 ## The Fix
-Configure DistinctCountMergeFunction property to enable agg table routing.
+Set mondrian.rolap.aggregates.DistinctCountMergeFunction=uniqCombinedMerge
+in mondrian.properties.
 
-## Key Takeaways
-- Use pause + list_threads to diagnose hangs
-- Stack inspection shows lock contention immediately
-- One conversation replaced: jstack + thread dump analysis + code review
+## What the agent did
+- 8 tool calls from 1 prompt
+- Identified lock contention, traced holder, found SQL-level cause
+- Equivalent manual work: jstack + thread dump analysis + SQL log review
 ```
 
 ### 4. CI Release Workflow
 
 **File:** `.github/workflows/release.yml`
 
-**Trigger:** Push tag matching `v*` (e.g., `v0.2.0`)
+**Trigger:** Push tag `v*`
 
 **Build matrix (5 targets):**
 
-| Target | Runner | Rust target | Notes |
-|--------|--------|-------------|-------|
-| linux-x86_64 | ubuntu-latest | x86_64-unknown-linux-musl | Static linking via musl |
-| linux-aarch64 | ubuntu-latest | aarch64-unknown-linux-musl | Cross-compile via `cross` |
-| macos-x86_64 | macos-latest | x86_64-apple-darwin | |
-| macos-aarch64 | macos-latest | aarch64-apple-darwin | |
-| windows-x86_64 | windows-latest | x86_64-pc-windows-msvc | |
+| Target | Runner | Rust target |
+|--------|--------|-------------|
+| linux-x86_64 | ubuntu-latest | x86_64-unknown-linux-musl |
+| linux-aarch64 | ubuntu-latest | aarch64-unknown-linux-musl (via cross) |
+| macos-x86_64 | macos-latest | x86_64-apple-darwin |
+| macos-aarch64 | macos-latest | aarch64-apple-darwin |
+| windows-x86_64 | windows-latest | x86_64-pc-windows-msvc |
 
-**Steps per target:**
-1. Checkout
-2. Install Rust toolchain + target
-3. Install `cross` (for linux-aarch64 only)
-4. `cargo build --release --target $TARGET` (or `cross build` for cross-compilation)
-5. Package: `tar.gz` for unix, `zip` for windows
-6. Name format: `jdwp-mcp-{version}-{target}.{ext}`
+**Asset naming:** `jdwp-mcp-<target>.tar.gz` (unix), `jdwp-mcp-<target>.zip` (windows)
 
-**Release step:**
-- Uses `softprops/action-gh-release` to create GitHub Release from tag
-- Uploads all 5 archives as release assets
-- Generates changelog from commits since last tag
+**Install in README:** Link to releases page, not a brittle curl+uname one-liner. The release page itself has per-platform download links. For advanced users, a note about `cargo install`.
 
-**Install script in README:**
-```bash
-# Linux/macOS
-curl -fsSL https://github.com/navicore/jdwp-mcp/releases/latest/download/jdwp-mcp-$(uname -s | tr A-Z a-z)-$(uname -m).tar.gz | tar xz
-sudo mv jdwp-mcp /usr/local/bin/
-```
+### 5. MCP Registry Prep
 
-### 5. MCP Registry Listings
+**Short description (for registry listings):**
+"Debug live Java applications through natural language. Attach to any JVM via JDWP, inspect threads, stacks, objects, set breakpoints, evaluate methods — 25 tools for autonomous debugging from Claude Code."
 
-**mcp.so:**
-- Submit via their GitHub-based process or web form
-- Needs: repo URL, short description, category (development-tools)
-- Description: "Debug live Java applications through natural language. Attach to any JVM, set breakpoints, inspect objects, evaluate methods — 25 tools for autonomous debugging."
+**smithery.yaml** in repo root for smithery.ai compatibility.
 
-**smithery.ai:**
-- Requires `smithery.yaml` in repo root with server metadata
-- Will create this config file
+**mcp.so** — submit via their process after README is live.
 
-Both registries pull README content, so the README rewrite is the primary deliverable for registry presence.
-
-## Out of scope
-
-- npm/npx wrapper (future consideration)
-- Docker image
-- Homebrew formula
-- Video demo / GIF recording
+---
 
 ## Files to create/modify
 
@@ -184,5 +224,5 @@ Both registries pull README content, so the README rewrite is the primary delive
 | `README.md` | Rewrite |
 | `examples/debugging-a-hang.md` | Create |
 | `.github/workflows/release.yml` | Create |
-| `smithery.yaml` | Create (for smithery.ai registry) |
-| `examples/README.md` | Update (add link to new example) |
+| `smithery.yaml` | Create |
+| `examples/README.md` | Update link |
