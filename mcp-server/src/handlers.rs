@@ -9,6 +9,43 @@ use jdwp_client::vm::ClassInfo;
 use serde_json::json;
 use tracing::{debug, info, warn};
 
+const AGENT_INSTRUCTIONS: &str = r#"JDWP debugger for live Java/JVM applications.
+
+SETUP: The target JVM must be started with JDWP enabled:
+  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -jar app.jar
+For Spring Boot: mvn spring-boot:run -Dspring-boot.run.jvmArguments="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+For Docker: set env JAVA_TOOL_OPTIONS="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005" and expose port 5005.
+For Kubernetes: kubectl port-forward pod/<name> 5005:5005
+
+WORKFLOW — start every session with:
+  1. debug.attach (host, port) — connect to the JVM
+  2. Choose a strategy based on the problem:
+
+STRATEGY A — Diagnosing a hang or deadlock:
+  debug.pause → debug.list_threads → debug.get_stack (on blocked threads) → debug.inspect (lock objects)
+
+STRATEGY B — Breakpoint-driven debugging:
+  debug.find_class (pattern) → debug.list_methods (class) → debug.set_breakpoint (class, line) → debug.wait_for_event → debug.get_stack / debug.get_variable
+
+STRATEGY C — Exception debugging:
+  debug.exception_breakpoint (class_pattern, caught, uncaught) → debug.wait_for_event → debug.get_stack
+
+STRATEGY D — Field watchpoint:
+  debug.watch (class, field) → debug.wait_for_event → debug.get_stack (see who modified the field)
+
+KEY TIPS:
+- debug.snapshot gives event + breakpoints + stack in one call — use it after any stop event
+- debug.get_stack auto-resolves object fields (shows ClassName{field=val} not just @hex)
+- debug.eval calls toString() or any no-arg method on an object — thread must be suspended
+- debug.set_breakpoint supports condition="var==value" for server-side filtering
+- debug.inspect shows all fields of an object by hex ID (from stack output @hex references)
+- Always debug.disconnect when done to release the JVM
+
+COMMON ERRORS:
+- "Connection refused" → JVM not started with JDWP flags, or wrong port
+- "THREAD_NOT_SUSPENDED" → use debug.pause or hit a breakpoint before debug.eval
+- "No method found at line X" → use debug.list_methods to find valid line ranges"#;
+
 pub struct RequestHandler {
     session_manager: SessionManager,
 }
@@ -207,10 +244,7 @@ impl RequestHandler {
                 name: "jdwp-mcp".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            instructions: Some(
-                "JDWP debugger. Use debug.attach first, then set_breakpoint/get_stack/etc."
-                    .to_string(),
-            ),
+            instructions: Some(AGENT_INSTRUCTIONS.to_string()),
         };
 
         Ok(serde_json::to_value(result).unwrap())
