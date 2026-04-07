@@ -66,6 +66,36 @@ impl JdwpConnection {
 
         Ok(values)
     }
+
+    /// Set values for variable slots in a frame (StackFrame.SetValues command)
+    pub async fn set_frame_values(
+        &mut self,
+        thread_id: ThreadId,
+        frame_id: FrameId,
+        slots: Vec<(i32, Value)>,
+    ) -> JdwpResult<()> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::STACK_FRAME,
+            stack_frame_commands::SET_VALUES,
+        );
+
+        packet.data.put_u64(thread_id);
+        packet.data.put_u64(frame_id);
+        packet.data.put_i32(slots.len() as i32);
+
+        for (slot, value) in &slots {
+            packet.data.put_i32(*slot);
+            // tagged value
+            packet.data.put_u8(value.tag);
+            value.data.write_to(&mut packet.data);
+        }
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+        Ok(())
+    }
 }
 
 /// Read a value based on its type tag (bounds-checked)

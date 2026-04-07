@@ -7,7 +7,6 @@ use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
 use crate::reader::{read_i32, read_string, read_u32, read_u8};
 use crate::types::ReferenceTypeId;
-use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 
 /// JVM version information
@@ -101,10 +100,7 @@ impl JdwpConnection {
             vm_commands::CLASSES_BY_SIGNATURE,
         );
 
-        // Write signature as JDWP string (4-byte length + UTF-8 bytes)
-        let sig_bytes = signature.as_bytes();
-        packet.data.put_u32(sig_bytes.len() as u32);
-        packet.data.extend_from_slice(sig_bytes);
+        crate::protocol::write_jdwp_string(&mut packet.data, signature);
 
         let reply = self.send_command(packet).await?;
         reply.check_error()?;
@@ -159,5 +155,21 @@ impl JdwpConnection {
         }
 
         Ok(classes)
+    }
+
+    /// Create a String object in the JVM (VirtualMachine.CreateString).
+    /// Returns the ObjectId of the new String.
+    pub async fn create_string(&mut self, value: &str) -> JdwpResult<u64> {
+        let id = self.next_id();
+        let mut packet =
+            CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, vm_commands::CREATE_STRING);
+
+        crate::protocol::write_jdwp_string(&mut packet.data, value);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        crate::reader::read_u64(&mut data)
     }
 }

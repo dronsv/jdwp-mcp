@@ -108,6 +108,63 @@ impl JdwpConnection {
 
         Ok(values)
     }
+
+    /// Invoke a method on an object (ObjectReference.InvokeMethod).
+    /// Thread must be suspended. Returns (return_value, exception_object_id).
+    /// exception_object_id = 0 means no exception was thrown.
+    pub async fn invoke_method(
+        &mut self,
+        object_id: ObjectId,
+        thread_id: crate::types::ThreadId,
+        class_id: ReferenceTypeId,
+        method_id: crate::types::MethodId,
+        args: &[Value],
+        single_threaded: bool,
+    ) -> JdwpResult<(Value, ObjectId)> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::OBJECT_REFERENCE,
+            object_reference_commands::INVOKE_METHOD,
+        );
+
+        packet.data.put_u64(object_id);
+        packet.data.put_u64(thread_id);
+        packet.data.put_u64(class_id);
+        packet.data.put_u64(method_id);
+
+        // arg count
+        packet.data.put_i32(args.len() as i32);
+        for arg in args {
+            // tagged value: tag + value bytes
+            packet.data.put_u8(arg.tag);
+            arg.data.write_to(&mut packet.data);
+        }
+
+        // options: INVOKE_SINGLE_THREADED = 0x01
+        let options: i32 = if single_threaded { 0x01 } else { 0x00 };
+        packet.data.put_i32(options);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+
+        // Return value: tagged value
+        let ret_tag = read_u8(&mut data)?;
+        let ret_data = read_value_by_tag(ret_tag, &mut data)?;
+        let return_value = Value {
+            tag: ret_tag,
+            data: ret_data,
+        };
+
+        // Exception: tagged-objectID
+        let _exc_tag = read_u8(&mut data)?;
+        let exception_id = read_u64(&mut data)?;
+
+        Ok((return_value, exception_id))
+    }
+
 }
 
 /// Read a value based on its type tag (bounds-checked, same as in stackframe.rs)

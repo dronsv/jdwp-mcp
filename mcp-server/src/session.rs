@@ -33,6 +33,9 @@ pub struct BreakpointInfo {
     pub method: Option<String>,
     pub enabled: bool,
     pub hit_count: u32,
+    /// If set, variable name and expected value for server-side filtering.
+    /// Format: "var_name==value" — auto-resumes if condition is false.
+    pub condition: Option<String>,
 }
 
 #[derive(Debug, Clone)]

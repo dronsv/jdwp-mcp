@@ -85,6 +85,44 @@ impl CommandPacket {
     }
 }
 
+/// Encode a Rust string as a JDWP Modified UTF-8 string (4-byte length + MUTF-8 bytes).
+/// Differences from standard UTF-8:
+/// - NUL (U+0000) is encoded as 0xC0 0x80 (not 0x00)
+/// - Supplementary characters (U+10000+) use surrogate pairs, each encoded as 3 bytes
+pub fn write_jdwp_string(buf: &mut Vec<u8>, s: &str) {
+    use bytes::BufMut;
+    let mut mutf8 = Vec::with_capacity(s.len());
+    for ch in s.chars() {
+        let cp = ch as u32;
+        if cp == 0 {
+            // NUL → 0xC0 0x80
+            mutf8.push(0xC0);
+            mutf8.push(0x80);
+        } else if cp <= 0x7F {
+            mutf8.push(cp as u8);
+        } else if cp <= 0x7FF {
+            mutf8.push(0xC0 | (cp >> 6) as u8);
+            mutf8.push(0x80 | (cp & 0x3F) as u8);
+        } else if cp <= 0xFFFF {
+            mutf8.push(0xE0 | (cp >> 12) as u8);
+            mutf8.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            mutf8.push(0x80 | (cp & 0x3F) as u8);
+        } else {
+            // Supplementary → surrogate pair, each surrogate encoded as 3-byte CESU-8
+            let cp = cp - 0x10000;
+            let high = 0xD800 + (cp >> 10);
+            let low = 0xDC00 + (cp & 0x3FF);
+            for surrogate in [high, low] {
+                mutf8.push(0xE0 | (surrogate >> 12) as u8);
+                mutf8.push(0x80 | ((surrogate >> 6) & 0x3F) as u8);
+                mutf8.push(0x80 | (surrogate & 0x3F) as u8);
+            }
+        }
+    }
+    buf.put_u32(mutf8.len() as u32);
+    buf.extend_from_slice(&mutf8);
+}
+
 impl ReplyPacket {
     pub fn decode(mut buf: &[u8]) -> JdwpResult<Self> {
         if buf.len() < HEADER_SIZE {

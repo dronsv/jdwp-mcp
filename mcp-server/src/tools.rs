@@ -21,13 +21,14 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "debug.set_breakpoint".to_string(),
-            description: "Set breakpoint at class:line".to_string(),
+            description: "Set breakpoint at class:line, optionally conditional".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "class_pattern": { "type": "string", "description": "e.g. com.example.MyClass" },
                     "line": { "type": "integer" },
-                    "method": { "type": "string", "description": "optional, disambiguates" }
+                    "method": { "type": "string", "description": "optional, disambiguates" },
+                    "condition": { "type": "string", "description": "e.g. count==5 — auto-resumes if false" }
                 },
                 "required": ["class_pattern", "line"]
             }),
@@ -181,6 +182,67 @@ pub fn get_tools() -> Vec<Tool> {
                     "class_pattern": { "type": "string", "description": "e.g. com.example.MyClass" }
                 },
                 "required": ["class_pattern"]
+            }),
+        },
+        Tool {
+            name: "debug.exception_breakpoint".to_string(),
+            description: "Break on exceptions (caught/uncaught, optionally by class)".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "class_pattern": { "type": "string", "description": "exception class, omit for all" },
+                    "caught": { "type": "boolean", "default": true },
+                    "uncaught": { "type": "boolean", "default": true }
+                }
+            }),
+        },
+        Tool {
+            name: "debug.eval".to_string(),
+            description: "Invoke a no-arg method on an object (default: toString)".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_id": { "type": "string", "description": "hex e.g. 0x1a3f" },
+                    "method": { "type": "string", "default": "toString" },
+                    "thread_id": { "type": "string", "description": "hex, optional" }
+                },
+                "required": ["object_id"]
+            }),
+        },
+        Tool {
+            name: "debug.set_value".to_string(),
+            description: "Set a local variable value in a stack frame".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "description": "new value (int/bool/float/string/null)" },
+                    "thread_id": { "type": "string", "description": "hex, optional" },
+                    "frame_index": { "type": "integer", "default": 0 }
+                },
+                "required": ["name", "value"]
+            }),
+        },
+        Tool {
+            name: "debug.snapshot".to_string(),
+            description: "Combined dump: last event + breakpoints + stack with vars".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+        },
+        Tool {
+            name: "debug.vm_info".to_string(),
+            description: "Get JVM version info".to_string(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+        },
+        Tool {
+            name: "debug.watch".to_string(),
+            description: "Watchpoint: break when a field is modified".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "class_pattern": { "type": "string", "description": "e.g. com.example.MyClass" },
+                    "field": { "type": "string", "description": "field name to watch" }
+                },
+                "required": ["class_pattern", "field"]
             }),
         },
     ]

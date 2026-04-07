@@ -140,6 +140,25 @@ impl Value {
     }
 }
 
+impl ValueData {
+    /// Write value bytes to a buffer (for JDWP protocol encoding)
+    pub fn write_to(&self, buf: &mut Vec<u8>) {
+        use bytes::BufMut;
+        match self {
+            ValueData::Byte(v) => buf.put_i8(*v),
+            ValueData::Char(v) => buf.put_u16(*v),
+            ValueData::Float(v) => buf.put_f32(*v),
+            ValueData::Double(v) => buf.put_f64(*v),
+            ValueData::Int(v) => buf.put_i32(*v),
+            ValueData::Long(v) => buf.put_i64(*v),
+            ValueData::Short(v) => buf.put_i16(*v),
+            ValueData::Boolean(v) => buf.put_u8(if *v { 1 } else { 0 }),
+            ValueData::Object(id) => buf.put_u64(*id),
+            ValueData::Void => {}
+        }
+    }
+}
+
 // Variable information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Variable {

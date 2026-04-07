@@ -4,7 +4,7 @@
 
 use crate::commands::event_kinds;
 use crate::protocol::{JdwpError, JdwpResult};
-use crate::reader::{read_i32, read_string, read_u64, read_u8};
+use crate::reader::{read_i32, read_i64, read_string, read_u64, read_u8};
 use crate::types::*;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -64,6 +64,21 @@ pub enum EventKind {
     MethodExit {
         thread: ThreadId,
         location: Location,
+    },
+    FieldAccess {
+        thread: ThreadId,
+        location: Location,
+        field_class: ReferenceTypeId,
+        field_id: FieldId,
+        object_id: ObjectId,
+    },
+    FieldModification {
+        thread: ThreadId,
+        location: Location,
+        field_class: ReferenceTypeId,
+        field_id: FieldId,
+        object_id: ObjectId,
+        new_value: String,
     },
     Unknown {
         kind: u8,
@@ -203,9 +218,44 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
                 }
                 EventKind::MethodExit { thread, location }
             }
+            event_kinds::FIELD_ACCESS => {
+                let thread = read_u64(&mut buf)?;
+                let location = read_location(&mut buf)?;
+                let _ref_type_tag = read_u8(&mut buf)?;
+                let field_class = read_u64(&mut buf)?;
+                let field_id = read_u64(&mut buf)?;
+                let _obj_tag = read_u8(&mut buf)?;
+                let object_id = read_u64(&mut buf)?;
+                EventKind::FieldAccess {
+                    thread,
+                    location,
+                    field_class,
+                    field_id,
+                    object_id,
+                }
+            }
+            event_kinds::FIELD_MODIFICATION => {
+                let thread = read_u64(&mut buf)?;
+                let location = read_location(&mut buf)?;
+                let _ref_type_tag = read_u8(&mut buf)?;
+                let field_class = read_u64(&mut buf)?;
+                let field_id = read_u64(&mut buf)?;
+                let _obj_tag = read_u8(&mut buf)?;
+                let object_id = read_u64(&mut buf)?;
+                // Read the new value as a tagged value and format as string
+                let value_tag = read_u8(&mut buf)?;
+                let new_value = skip_and_format_value(value_tag, &mut buf)?;
+                EventKind::FieldModification {
+                    thread,
+                    location,
+                    field_class,
+                    field_id,
+                    object_id,
+                    new_value,
+                }
+            }
             _ => {
                 warn!("Unsupported event kind: {}, cannot parse remaining events in composite packet", kind);
-                // Cannot safely continue — we don't know how many bytes this event occupies
                 break;
             }
         };
@@ -221,6 +271,26 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
         suspend_policy,
         events,
     })
+}
+
+/// Read a tagged value, format as compact string, advancing the buffer
+fn skip_and_format_value(tag: u8, buf: &mut &[u8]) -> JdwpResult<String> {
+    match tag {
+        66 => Ok(crate::reader::read_i8(buf)?.to_string()),              // byte
+        67 => Ok(format!("'{}'", char::from_u32(crate::reader::read_u16(buf)? as u32).unwrap_or('?'))), // char
+        68 => Ok(format!("{}d", crate::reader::read_f64(buf)?)),         // double
+        70 => Ok(format!("{}f", crate::reader::read_f32(buf)?)),         // float
+        73 => Ok(read_i32(buf)?.to_string()),                            // int
+        74 => Ok(format!("{}L", read_i64(buf)?)),                        // long
+        83 => Ok(crate::reader::read_i16(buf)?.to_string()),             // short
+        90 => Ok(if read_u8(buf)? != 0 { "true" } else { "false" }.to_string()), // boolean
+        86 => Ok("void".to_string()),                                    // void
+        76 | 115 | 116 | 103 | 108 | 99 | 91 => {                       // object types
+            let oid = read_u64(buf)?;
+            if oid == 0 { Ok("null".to_string()) } else { Ok(format!("@{:x}", oid)) }
+        }
+        _ => Ok(format!("?tag={}", tag)),
+    }
 }
 
 /// Read a location from the buffer

@@ -256,6 +256,14 @@ impl RequestHandler {
             "debug.inspect" => self.handle_inspect(call_params.arguments).await,
             "debug.find_class" => self.handle_find_class(call_params.arguments).await,
             "debug.list_methods" => self.handle_list_methods(call_params.arguments).await,
+            "debug.exception_breakpoint" => {
+                self.handle_exception_breakpoint(call_params.arguments).await
+            }
+            "debug.eval" => self.handle_eval(call_params.arguments).await,
+            "debug.set_value" => self.handle_set_value(call_params.arguments).await,
+            "debug.snapshot" => self.handle_snapshot(call_params.arguments).await,
+            "debug.vm_info" => self.handle_vm_info(call_params.arguments).await,
+            "debug.watch" => self.handle_watch(call_params.arguments).await,
             _ => Err(format!("Unknown tool: {}", call_params.name)),
         };
 
@@ -374,7 +382,8 @@ impl RequestHandler {
                                     }
                                 }
 
-                                if let Some(session_guard) =
+                                // Phase 1: Brief lock to clear step + extract condition data
+                                let cond_info = if let Some(session_guard) =
                                     session_manager.get_current_session().await
                                 {
                                     let mut session = session_guard.lock().await;
@@ -383,11 +392,61 @@ impl RequestHandler {
                                     {
                                         session.active_step = None;
                                     }
+
+                                    // Extract condition data if this is a conditional breakpoint
+                                    event_set.events.first().and_then(|e| {
+                                        if let jdwp_client::events::EventKind::Breakpoint {
+                                            thread,
+                                            ..
+                                        } = &e.details
+                                        {
+                                            let condition = session
+                                                .breakpoints
+                                                .values()
+                                                .find(|bp| bp.request_id == e.request_id)
+                                                .and_then(|bp| bp.condition.clone())?;
+                                            Some((*thread, condition))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    // Lock released here
+                                } else {
+                                    break; // Session gone
+                                };
+
+                                // Phase 2: Evaluate condition WITHOUT holding lock (uses connection_clone)
+                                let should_skip = if let Some((thread_id, condition)) = cond_info {
+                                    let parts: Vec<&str> = condition.splitn(2, "==").collect();
+                                    if parts.len() == 2 {
+                                        let var_name = parts[0].trim().to_string();
+                                        let expected = parts[1].trim().to_string();
+                                        Self::eval_condition(
+                                            &connection_clone,
+                                            thread_id,
+                                            &var_name,
+                                            &expected,
+                                        )
+                                        .await
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                };
+
+                                // Phase 3: Brief lock to store result or resume
+                                if should_skip {
+                                    let _ = connection_clone.clone().resume_all().await;
+                                } else if let Some(session_guard) =
+                                    session_manager.get_current_session().await
+                                {
+                                    let mut session = session_guard.lock().await;
                                     session.last_event = Some(event_set);
                                     session.last_event_seq += 1;
                                     session.last_event_notify.notify_waiters();
                                 } else {
-                                    break; // Session gone
+                                    break;
                                 }
                             } else {
                                 break; // Connection closed
@@ -495,7 +554,25 @@ impl RequestHandler {
             .map_err(|e| format!("Failed to set breakpoint: {}", e))?;
 
         // Track the breakpoint in session
+        let condition = args
+            .get("condition")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if let Some(ref c) = condition {
+            if c.splitn(2, "==").count() != 2 {
+                return Err(format!(
+                    "invalid condition format '{}', expected var_name==value",
+                    c
+                ));
+            }
+        }
+
         let bp_id = format!("bp_{}", request_id);
+        let cond_desc = condition
+            .as_deref()
+            .map(|c| format!(" if {}", c))
+            .unwrap_or_default();
         session.breakpoints.insert(
             bp_id.clone(),
             crate::session::BreakpointInfo {
@@ -506,12 +583,13 @@ impl RequestHandler {
                 method: Some(method.name.clone()),
                 enabled: true,
                 hit_count: 0,
+                condition,
             },
         );
 
         Ok(format!(
-            "bp {} at {}:{} class={} method={}",
-            bp_id, class_pattern, line, class.signature, method.name
+            "bp {} at {}:{} class={} method={}{}",
+            bp_id, class_pattern, line, class.signature, method.name, cond_desc
         ))
     }
 
@@ -633,7 +711,9 @@ impl RequestHandler {
             | jdwp_client::events::EventKind::ClassPrepare { thread, .. }
             | jdwp_client::events::EventKind::Exception { thread, .. }
             | jdwp_client::events::EventKind::MethodEntry { thread, .. }
-            | jdwp_client::events::EventKind::MethodExit { thread, .. } => Some(*thread),
+            | jdwp_client::events::EventKind::MethodExit { thread, .. }
+            | jdwp_client::events::EventKind::FieldAccess { thread, .. }
+            | jdwp_client::events::EventKind::FieldModification { thread, .. } => Some(*thread),
             _ => None,
         }
     }
@@ -1185,6 +1265,26 @@ impl RequestHandler {
                             thread, location.method_id
                         )
                     }
+                    jdwp_client::events::EventKind::FieldModification {
+                        thread,
+                        field_id,
+                        object_id,
+                        new_value,
+                        ..
+                    } => {
+                        format!(
+                            "field_modified thread=0x{:x} field=0x{:x} obj=0x{:x} new={}",
+                            thread, field_id, object_id, new_value
+                        )
+                    }
+                    jdwp_client::events::EventKind::FieldAccess {
+                        thread, field_id, object_id, ..
+                    } => {
+                        format!(
+                            "field_access thread=0x{:x} field=0x{:x} obj=0x{:x}",
+                            thread, field_id, object_id
+                        )
+                    }
                     _ => format!("unknown kind={}", event.kind),
                 };
                 output.push_str(&line);
@@ -1384,5 +1484,540 @@ impl RequestHandler {
         }
 
         Ok(output)
+    }
+
+    async fn handle_exception_breakpoint(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<String, String> {
+        let caught = args
+            .get("caught")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let uncaught = args
+            .get("uncaught")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let class_pattern = args.get("class_pattern").and_then(|v| v.as_str());
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        // Resolve exception class if pattern given, otherwise 0 = all exceptions
+        let exception_class_id = if let Some(pattern) = class_pattern {
+            let classes = Self::resolve_classes(&mut session, pattern).await?;
+            classes
+                .first()
+                .map(|c| c.type_id)
+                .ok_or_else(|| format!("class not found: {}", pattern))?
+        } else {
+            0
+        };
+
+        let request_id = session
+            .connection
+            .set_exception_breakpoint(
+                exception_class_id,
+                caught,
+                uncaught,
+                jdwp_client::SuspendPolicy::All,
+            )
+            .await
+            .map_err(|e| format!("Failed to set exception breakpoint: {}", e))?;
+
+        let class_desc = class_pattern.unwrap_or("*");
+        let scope = match (caught, uncaught) {
+            (true, true) => "caught+uncaught",
+            (true, false) => "caught",
+            (false, true) => "uncaught",
+            (false, false) => "none",
+        };
+        Ok(format!(
+            "exception bp req={} class={} scope={}",
+            request_id, class_desc, scope
+        ))
+    }
+
+    async fn handle_eval(&self, args: serde_json::Value) -> Result<String, String> {
+        let object_id_str = args
+            .get("object_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'object_id'".to_string())?;
+        let object_id = u64::from_str_radix(object_id_str.trim_start_matches("0x"), 16)
+            .map_err(|_| format!("Invalid object_id: {}", object_id_str))?;
+        let method_name = args
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("toString");
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        // Need a suspended thread for invocation
+        let thread_id = Self::parse_thread_id(&args);
+        let target_thread = self.resolve_target_thread(&mut session, thread_id).await?;
+
+        // Verify thread is suspended (required for method invocation)
+        match session.connection.get_frames(target_thread, 0, 1).await {
+            Ok(f) if !f.is_empty() => {} // has frames = suspended
+            _ => {
+                return Err(format!(
+                    "thread 0x{:x} is not suspended. Hit a breakpoint or use debug.pause first",
+                    target_thread
+                ));
+            }
+        }
+
+        // Get object's class
+        let ref_type_id = session
+            .connection
+            .get_object_reference_type(object_id)
+            .await
+            .map_err(|e| format!("Failed to get object type: {}", e))?;
+
+        // Find the method
+        let methods = session
+            .connection
+            .get_methods(ref_type_id)
+            .await
+            .map_err(|e| format!("Failed to get methods: {}", e))?;
+
+        let method = methods
+            .iter()
+            .find(|m| m.name == method_name && m.signature.starts_with("()"))
+            .ok_or_else(|| format!("no zero-arg method '{}' found", method_name))?;
+
+        let method_id = method.method_id;
+
+        // Invoke with no args, single-threaded
+        let (return_value, exception_id) = session
+            .connection
+            .invoke_method(
+                object_id,
+                target_thread,
+                ref_type_id,
+                method_id,
+                &[],
+                true,
+            )
+            .await
+            .map_err(|e| format!("Invoke failed: {}", e))?;
+
+        if exception_id != 0 {
+            // Try to get exception message
+            let exc_msg =
+                match session.connection.get_string_value(exception_id).await {
+                    Ok(s) => s,
+                    Err(_) => format!("exception@0x{:x}", exception_id),
+                };
+            return Err(format!("threw {}", exc_msg));
+        }
+
+        let formatted = Self::format_value_resolved(&mut session, &return_value).await;
+        Ok(formatted)
+    }
+
+    async fn handle_set_value(&self, args: serde_json::Value) -> Result<String, String> {
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'name'".to_string())?;
+        let frame_index = args
+            .get("frame_index")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        let thread_id = Self::parse_thread_id(&args);
+        let target_thread = self.resolve_target_thread(&mut session, thread_id).await?;
+
+        let frames = session
+            .connection
+            .get_frames(target_thread, 0, frame_index as i32 + 1)
+            .await
+            .map_err(|e| format!("Failed to get frames: {}", e))?;
+        let frame = frames
+            .get(frame_index)
+            .ok_or_else(|| format!("Frame {} not available", frame_index))?;
+
+        let var_table = session
+            .connection
+            .get_variable_table(frame.location.class_id, frame.location.method_id)
+            .await
+            .map_err(|e| format!("Failed to get variable table: {}", e))?;
+        let current_index = frame.location.index;
+        let var = var_table
+            .iter()
+            .filter(|v| {
+                current_index >= v.code_index && current_index < v.code_index + v.length as u64
+            })
+            .find(|v| v.name == name)
+            .ok_or_else(|| format!("Variable '{}' not found", name))?;
+
+        let slot = var.slot as i32;
+        let sig_byte = var.signature.as_bytes().first().copied().unwrap_or(b'L');
+
+        // Build the value to set based on signature type and the "value" arg
+        let new_value = Self::parse_set_value(&args, sig_byte, &mut session).await?;
+
+        let frame_id = frame.frame_id;
+        session
+            .connection
+            .set_frame_values(target_thread, frame_id, vec![(slot, new_value.clone())])
+            .await
+            .map_err(|e| format!("Failed to set value: {}", e))?;
+
+        let formatted = Self::format_value_leaf(&mut session, &new_value).await;
+        Ok(format!("{}={}", name, formatted))
+    }
+
+    async fn parse_set_value(
+        args: &serde_json::Value,
+        sig_byte: u8,
+        session: &mut crate::session::DebugSession,
+    ) -> Result<jdwp_client::types::Value, String> {
+        use jdwp_client::types::{Value, ValueData};
+        let raw = args
+            .get("value")
+            .ok_or_else(|| "Missing 'value' parameter".to_string())?;
+
+        let (tag, data) = match sig_byte {
+            b'I' => {
+                let v = raw.as_i64().ok_or("value must be integer")? as i32;
+                (b'I', ValueData::Int(v))
+            }
+            b'J' => {
+                let v = raw.as_i64().ok_or("value must be integer")?;
+                (b'J', ValueData::Long(v))
+            }
+            b'S' => {
+                let v = raw.as_i64().ok_or("value must be integer")? as i16;
+                (b'S', ValueData::Short(v))
+            }
+            b'B' => {
+                let v = raw.as_i64().ok_or("value must be integer")? as i8;
+                (b'B', ValueData::Byte(v))
+            }
+            b'Z' => {
+                let v = raw.as_bool().ok_or("value must be boolean")?;
+                (b'Z', ValueData::Boolean(v))
+            }
+            b'F' => {
+                let v = raw.as_f64().ok_or("value must be number")? as f32;
+                (b'F', ValueData::Float(v))
+            }
+            b'D' => {
+                let v = raw.as_f64().ok_or("value must be number")?;
+                (b'D', ValueData::Double(v))
+            }
+            b'C' => {
+                let s = raw.as_str().ok_or("value must be string for char")?;
+                let c = s.chars().next().ok_or("empty string for char")?;
+                (b'C', ValueData::Char(c as u16))
+            }
+            // String or object reference
+            b'L' | b's' => {
+                if let Some(s) = raw.as_str() {
+                    // Create a string in the JVM
+                    let string_id = session
+                        .connection
+                        .create_string(s)
+                        .await
+                        .map_err(|e| format!("Failed to create string: {}", e))?;
+                    (115u8, ValueData::Object(string_id)) // 's' = string tag
+                } else if raw.is_null() {
+                    (b'L', ValueData::Object(0))
+                } else {
+                    return Err("value must be string or null for object type".to_string());
+                }
+            }
+            _ => return Err(format!("unsupported variable type: {}", sig_byte as char)),
+        };
+
+        Ok(Value { tag, data })
+    }
+
+    async fn handle_snapshot(&self, _args: serde_json::Value) -> Result<String, String> {
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        let mut output = String::new();
+
+        // 1. Last event
+        if let Some(event_set) = &session.last_event {
+            for event in &event_set.events {
+                let desc = match &event.details {
+                    jdwp_client::events::EventKind::Breakpoint { thread, location } => {
+                        format!(
+                            "breakpoint thread=0x{:x} class=0x{:x} idx={}",
+                            thread, location.class_id, location.index
+                        )
+                    }
+                    jdwp_client::events::EventKind::Step { thread, location } => {
+                        format!(
+                            "step thread=0x{:x} class=0x{:x} idx={}",
+                            thread, location.class_id, location.index
+                        )
+                    }
+                    jdwp_client::events::EventKind::Exception {
+                        thread, exception, ..
+                    } => {
+                        format!("exception thread=0x{:x} obj=0x{:x}", thread, exception)
+                    }
+                    _ => format!("event kind={}", event.kind),
+                };
+                output.push_str(&format!("[event] {}\n", desc));
+            }
+        } else {
+            output.push_str("[event] none\n");
+        }
+
+        // 2. Active breakpoints
+        if !session.breakpoints.is_empty() {
+            for (_, bp) in &session.breakpoints {
+                output.push_str(&format!(
+                    "[bp] {} {}:{}\n",
+                    bp.id, bp.class_pattern, bp.line
+                ));
+            }
+        }
+
+        // 3. Stack of event thread (if available)
+        let thread_id = session
+            .last_event
+            .as_ref()
+            .and_then(Self::event_thread_id)
+            .or(session.selected_thread_id);
+
+        if let Some(tid) = thread_id {
+            if let Ok(frames) = session.connection.get_frames(tid, 0, -1).await {
+                let max_frames = 10;
+                output.push_str(&format!(
+                    "[stack] thread=0x{:x}, {} frames:\n",
+                    tid,
+                    frames.len()
+                ));
+                for (idx, frame) in frames.iter().take(max_frames).enumerate() {
+                    let class_display =
+                        if let Some(sig) =
+                            Self::get_class_signature(&mut session, frame.location.class_id).await
+                        {
+                            Self::signature_to_display_name(&sig).unwrap_or(sig)
+                        } else {
+                            format!("0x{:x}", frame.location.class_id)
+                        };
+
+                    let mname = if let Ok(methods) =
+                        session.connection.get_methods(frame.location.class_id).await
+                    {
+                        methods
+                            .iter()
+                            .find(|m| m.method_id == frame.location.method_id)
+                            .map(|m| m.name.clone())
+                            .unwrap_or_else(|| "?".to_string())
+                    } else {
+                        "?".to_string()
+                    };
+
+                    output.push_str(&format!(
+                        "  #{} {}.{}:{}\n",
+                        idx, class_display, mname, frame.location.index
+                    ));
+
+                    // Variables for top 3 frames only
+                    if idx < 3 {
+                        if let Ok(var_table) = session
+                            .connection
+                            .get_variable_table(frame.location.class_id, frame.location.method_id)
+                            .await
+                        {
+                            let ci = frame.location.index;
+                            let active: Vec<_> = var_table
+                                .iter()
+                                .filter(|v| ci >= v.code_index && ci < v.code_index + v.length as u64)
+                                .collect();
+
+                            if !active.is_empty() {
+                                let slots: Vec<_> = active
+                                    .iter()
+                                    .map(|v| jdwp_client::stackframe::VariableSlot {
+                                        slot: v.slot as i32,
+                                        sig_byte: v
+                                            .signature
+                                            .as_bytes()
+                                            .first()
+                                            .copied()
+                                            .unwrap_or(b'L'),
+                                    })
+                                    .collect();
+
+                                if let Ok(values) = session
+                                    .connection
+                                    .get_frame_values(tid, frame.frame_id, slots)
+                                    .await
+                                {
+                                    let mut pairs = Vec::new();
+                                    for (var, val) in active.iter().zip(values.iter()) {
+                                        let f =
+                                            Self::format_value_resolved(&mut session, val).await;
+                                        pairs.push(format!("{}={}", var.name, f));
+                                    }
+                                    output.push_str(&format!("    {}\n", pairs.join("  ")));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
+    async fn handle_vm_info(&self, _args: serde_json::Value) -> Result<String, String> {
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        let version = session
+            .connection
+            .get_version()
+            .await
+            .map_err(|e| format!("Failed to get version: {}", e))?;
+
+        Ok(format!(
+            "{} {} (JDWP {}.{})",
+            version.vm_name, version.vm_version, version.jdwp_major, version.jdwp_minor
+        ))
+    }
+
+    async fn handle_watch(&self, args: serde_json::Value) -> Result<String, String> {
+        let class_pattern = args
+            .get("class_pattern")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'class_pattern'".to_string())?;
+        let field_name = args
+            .get("field")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'field'".to_string())?;
+
+        let session_guard = self
+            .session_manager
+            .get_current_session()
+            .await
+            .ok_or_else(|| "No active debug session".to_string())?;
+        let mut session = session_guard.lock().await;
+
+        let classes = Self::resolve_classes(&mut session, class_pattern).await?;
+        let class = classes
+            .first()
+            .ok_or_else(|| format!("class not found: {}", class_pattern))?;
+
+        let fields = session
+            .connection
+            .get_fields(class.type_id)
+            .await
+            .map_err(|e| format!("Failed to get fields: {}", e))?;
+
+        let field = fields
+            .iter()
+            .find(|f| f.name == field_name)
+            .ok_or_else(|| format!("field '{}' not found", field_name))?;
+
+        let request_id = session
+            .connection
+            .set_field_watch(
+                class.type_id,
+                field.field_id,
+                jdwp_client::SuspendPolicy::All,
+            )
+            .await
+            .map_err(|e| format!("Failed to set watchpoint: {}", e))?;
+
+        Ok(format!(
+            "watch req={} {}.{} (on modification)",
+            request_id, class_pattern, field_name
+        ))
+    }
+
+    /// Evaluate a conditional breakpoint expression using a connection clone (no lock held).
+    /// Returns true if the condition does NOT match (should skip/resume).
+    async fn eval_condition(
+        conn: &jdwp_client::JdwpConnection,
+        thread_id: u64,
+        var_name: &str,
+        expected: &str,
+    ) -> bool {
+        let mut conn = conn.clone();
+
+        let frames = match conn.get_frames(thread_id, 0, 1).await {
+            Ok(f) if !f.is_empty() => f,
+            _ => return false,
+        };
+        let frame = &frames[0];
+
+        let var_table = match conn
+            .get_variable_table(frame.location.class_id, frame.location.method_id)
+            .await
+        {
+            Ok(vt) => vt,
+            Err(_) => return false,
+        };
+
+        let ci = frame.location.index;
+        let var = match var_table
+            .iter()
+            .filter(|v| ci >= v.code_index && ci < v.code_index + v.length as u64)
+            .find(|v| v.name == var_name)
+        {
+            Some(v) => v,
+            None => return false,
+        };
+
+        let slots = vec![jdwp_client::stackframe::VariableSlot {
+            slot: var.slot as i32,
+            sig_byte: var
+                .signature
+                .as_bytes()
+                .first()
+                .copied()
+                .unwrap_or(b'L'),
+        }];
+
+        let values = match conn
+            .get_frame_values(thread_id, frame.frame_id, slots)
+            .await
+        {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        let actual = match values.first() {
+            Some(v) => v.format_compact(),
+            None => return false,
+        };
+
+        actual.trim_matches('"') != expected.trim_matches('"')
     }
 }

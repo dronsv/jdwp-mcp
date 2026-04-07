@@ -140,4 +140,75 @@ impl JdwpConnection {
         self.clear_event_request(event_kinds::SINGLE_STEP, request_id)
             .await
     }
+
+    /// Set an exception breakpoint (EventRequest.Set with EXCEPTION kind).
+    /// `exception_class_id` = 0 means all exceptions.
+    /// Returns the request ID.
+    pub async fn set_exception_breakpoint(
+        &mut self,
+        exception_class_id: ReferenceTypeId,
+        caught: bool,
+        uncaught: bool,
+        suspend_policy: SuspendPolicy,
+    ) -> JdwpResult<i32> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(id, command_sets::EVENT_REQUEST, event_commands::SET);
+
+        packet.data.put_u8(event_kinds::EXCEPTION);
+        packet.data.put_u8(suspend_policy as u8);
+
+        // 1 modifier: ExceptionOnly (8)
+        packet.data.put_i32(1);
+        packet.data.put_u8(8);
+        packet.data.put_u64(exception_class_id);
+        packet.data.put_u8(caught as u8);
+        packet.data.put_u8(uncaught as u8);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        let request_id = read_i32(&mut data)?;
+        Ok(request_id)
+    }
+
+    /// Clear an exception breakpoint by request ID.
+    pub async fn clear_exception_breakpoint(&mut self, request_id: i32) -> JdwpResult<()> {
+        self.clear_event_request(event_kinds::EXCEPTION, request_id)
+            .await
+    }
+
+    /// Set a field modification watchpoint (EventRequest.Set with FIELD_MODIFICATION).
+    /// Fires when the specified field is written to.
+    pub async fn set_field_watch(
+        &mut self,
+        class_id: ReferenceTypeId,
+        field_id: crate::types::FieldId,
+        suspend_policy: SuspendPolicy,
+    ) -> JdwpResult<i32> {
+        let id = self.next_id();
+        let mut packet = CommandPacket::new(id, command_sets::EVENT_REQUEST, event_commands::SET);
+
+        packet.data.put_u8(event_kinds::FIELD_MODIFICATION);
+        packet.data.put_u8(suspend_policy as u8);
+
+        // 1 modifier: FieldOnly (9)
+        packet.data.put_i32(1);
+        packet.data.put_u8(9);
+        packet.data.put_u64(class_id);
+        packet.data.put_u64(field_id);
+
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+
+        let mut data = reply.data();
+        let request_id = read_i32(&mut data)?;
+        Ok(request_id)
+    }
+
+    /// Clear a field watchpoint by request ID.
+    pub async fn clear_field_watch(&mut self, request_id: i32) -> JdwpResult<()> {
+        self.clear_event_request(event_kinds::FIELD_MODIFICATION, request_id)
+            .await
+    }
 }
