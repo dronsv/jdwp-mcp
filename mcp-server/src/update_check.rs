@@ -40,10 +40,11 @@ fn check_update() -> Result<(), Box<dyn std::error::Error>> {
     // Try pip first, then git
     let latest = fetch_via_pip().or_else(|_| fetch_via_git())?;
 
-    // Cache
+    // Cache — only mark as checked if version was successfully written
     let _ = std::fs::create_dir_all(&cache_dir);
-    let _ = std::fs::write(&version_file, &latest);
-    let _ = std::fs::File::create(&cache_file);
+    if std::fs::write(&version_file, &latest).is_ok() {
+        let _ = std::fs::File::create(&cache_file); // touch timestamp
+    }
 
     if latest != CURRENT_VERSION {
         notify(&latest);

@@ -1027,11 +1027,9 @@ impl RequestHandler {
     }
 
     async fn handle_get_stack(&self, args: serde_json::Value) -> Result<String, String> {
-        // Wrap in catch_unwind-style error handling — get_stack must never crash the server
-        match self.handle_get_stack_inner(args).await {
-            Ok(output) => Ok(output),
-            Err(e) => Err(format!("get_stack failed: {}", e)),
-        }
+        // Error boundary — connection errors during variable resolution
+        // are caught here instead of propagating to the caller
+        self.handle_get_stack_inner(args).await
     }
 
     async fn handle_get_stack_inner(&self, args: serde_json::Value) -> Result<String, String> {
@@ -2502,18 +2500,22 @@ impl RequestHandler {
 
         // Release lock while waiting
         let notify = session.last_event_notify.clone();
-        let start_seq = session.last_event_seq;
+        let mut last_seen_seq = session.last_event_seq;
         drop(session);
 
         let wait_result =
             tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
                 loop {
+                    // Subscribe before checking to prevent missed notifications
                     let future = notify.notified();
                     tokio::pin!(future);
                     future.as_mut().enable();
+
+                    // Check for ClassPrepare event
                     {
                         let session = session_guard.lock().await;
-                        if session.last_event_seq > start_seq {
+                        if session.last_event_seq > last_seen_seq {
+                            last_seen_seq = session.last_event_seq;
                             if let Some(ref event_set) = session.last_event {
                                 for event in &event_set.events {
                                     if let jdwp_client::events::EventKind::ClassPrepare {
@@ -2532,10 +2534,11 @@ impl RequestHandler {
             })
             .await;
 
-        // Clear the event request
+        // Clear the event request + resume JVM (SuspendPolicy::All froze it)
         {
             let mut session = session_guard.lock().await;
             let _ = session.connection.clear_class_prepare(request_id).await;
+            let _ = session.connection.resume_all().await;
         }
 
         match wait_result {
