@@ -6,11 +6,13 @@
 
 Attach to a running Java process, pause threads, inspect stacks and objects,
 set breakpoints, and evaluate state — through natural language.
+One prompt starts an agent-driven diagnosis loop with live runtime data.
+
 Works with Claude Code, Codex, Cursor, or any MCP-compatible agent.
 
 ## See it in action
 
-A database query is hanging. Find the root cause:
+A service query is hanging. Find the root cause:
 
 ```
 > Attach to localhost:5005 and find out why a query is stuck.
@@ -36,27 +38,27 @@ Root cause: the query bypassed the aggregate table and fell back to
 a full fact-table scan. Thread-7 is waiting for thread-2 to finish.
 ```
 
-One prompt. Six tool calls. Lock contention + root cause identified.
+One prompt. Six tool calls. Lock contention and root cause identified.
 
 ## Quick Start
 
 ### 1. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dronsv/jdwp-mcp/main/install.sh | sh
+pip install jdwp-mcp
 ```
 
 <details>
-<summary>Other install methods</summary>
+<summary>Alternative install methods</summary>
 
 ```bash
-# pip (no Rust required)
-pip install jdwp-mcp
+# Pre-built binary
+curl -fsSL https://raw.githubusercontent.com/dronsv/jdwp-mcp/main/install.sh | sh
 
-# cargo
+# Cargo (requires Rust)
 cargo install --git https://github.com/dronsv/jdwp-mcp
 
-# from source
+# From source
 git clone https://github.com/dronsv/jdwp-mcp && cd jdwp-mcp && cargo build --release
 ```
 
@@ -65,14 +67,13 @@ git clone https://github.com/dronsv/jdwp-mcp && cd jdwp-mcp && cargo build --rel
 ### 2. Configure your agent
 
 ```bash
-# If installed via cargo install:
 claude mcp add jdwp jdwp-mcp
-
-# If built from source:
-claude mcp add jdwp /path/to/jdwp-mcp/target/release/jdwp-mcp
 ```
 
-Works with any MCP-compatible agent. For non-Claude agents, add to `.mcp.json`:
+<details>
+<summary>Other agents</summary>
+
+For Codex, Cursor, or other MCP-compatible agents, add to `.mcp.json`:
 
 ```json
 {
@@ -83,6 +84,8 @@ Works with any MCP-compatible agent. For non-Claude agents, add to `.mcp.json`:
   }
 }
 ```
+
+</details>
 
 ### 3. Start your Java app with JDWP
 
@@ -98,8 +101,6 @@ Attach to localhost:5005 and set a breakpoint at com.example.MyService line 42
 
 ## First prompts
 
-Copy-paste these to get started:
-
 ```
 Attach to localhost:5005
 List all threads and show which are blocked
@@ -108,33 +109,34 @@ When the breakpoint hits, show the stack and all variables
 Pause the JVM and find threads waiting on locks
 ```
 
+## Best first use cases
+
+- Hung requests and deadlocks
+- Blocked thread pools
+- Suspicious SQL or runtime state mismatch
+- Breakpoint-driven diagnosis without IDE access
+- Remote debugging via `kubectl port-forward`
+
 ## Why this instead of jstack or an IDE?
 
 - **Works inside your agent** — no tool switching, no separate debugger window
 - **Combines attach + inspect + reasoning in one loop** — the agent decides what to look at next
 - **Conversational** — describe the problem, the agent runs the debug session
-- **Ground truth for large codebases** — in complex projects with deep framework stacks (Spring, Hibernate, OLAP engines), agents can get lost tracing code paths statically. Live debugging gives the agent actual runtime state instead of guesses — which thread holds the lock, what SQL was generated, what value a variable actually has right now
+- **Ground truth for large codebases** — in complex projects with deep framework stacks (Spring, Hibernate, OLAP engines), agents can get lost tracing code paths statically. Live debugging gives the agent actual runtime state: which thread holds the lock, what SQL was generated, what value a variable actually has right now
 
 ## Tools
 
-25 tools organized in three groups:
-
 **Connection and control**
-`attach` `disconnect` `pause` `continue` `step_into` `step_over` `step_out`
+attach, disconnect, pause, continue, step into/over/out
 
 **Breakpoints and events**
-`set_breakpoint` (with optional conditions) `clear_breakpoint` `list_breakpoints` `exception_breakpoint` `watch` (field modification) `wait_for_event` `get_last_event`
+set\_breakpoint (with conditions), clear, list, exception\_breakpoint, watch (field modification), wait\_for\_event
 
-**Inspection and mutation**
-`get_stack` (auto-resolves objects) `get_variable` `inspect` `eval` `set_value` `snapshot` `find_class` `list_methods` `list_threads` `select_thread` `vm_info`
+**Inspection**
+get\_stack (auto-resolves objects), get\_variable, inspect, eval, set\_value, snapshot, find\_class, list\_methods, list\_threads, vm\_info
 
-## Use it for
-
-- Hung requests and deadlocks
-- Blocked thread pools
-- Breakpoint-driven diagnosis in running services
-- State inspection when reproducing locally is hard
-- Remote debugging via `kubectl port-forward`
+**Tracing**
+trace (arm method-level tracing on a package), trace\_result (get the call path)
 
 ## Don't use it for
 
@@ -142,20 +144,20 @@ Pause the JVM and find threads waiting on locks
 - Always-on production observability
 - Environments where JDWP attach or thread pausing is operationally unsafe
 
-## Deploy scenarios
-
-See [docs/deploy.md](docs/deploy.md) for setup with Maven, Gradle, Tomcat, Docker,
-Kubernetes (port-forward), and SSH tunnels.
-
 ## Operational note
 
 JDWP changes runtime behavior. Pausing threads and setting breakpoints may be
 disruptive. Use carefully in production; prefer staging environments or
 controlled maintenance windows.
 
+## Deploy scenarios
+
+See [docs/deploy.md](docs/deploy.md) for setup with Maven, Gradle, Tomcat, Docker,
+Kubernetes (port-forward), and SSH tunnels.
+
 ## Examples
 
-- [Debugging a hanging query](examples/debugging-a-hang.md) — full walkthrough of diagnosing lock contention and missing aggregate routing
+- [Debugging a hanging query](examples/debugging-a-hang.md) — full walkthrough: lock contention, thread analysis, root cause identification
 - [Observability debugging](examples/observability-debugging.md) — investigating Spring Boot ObservationRegistry issues
 
 ## Architecture
@@ -167,8 +169,6 @@ Agent  -->  MCP Server  -->  JDWP Client  -->  TCP  -->  JVM
         tracks session state, summarizes
         runtime objects for the agent.
 ```
-
-Core crates: `jdwp-client` (JDWP protocol) and `mcp-server` (MCP transport and session management).
 
 ## Building from source
 
