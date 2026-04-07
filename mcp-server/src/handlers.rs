@@ -588,7 +588,10 @@ impl RequestHandler {
         let classes = Self::resolve_classes(&mut session, class_pattern).await?;
 
         if classes.is_empty() {
-            return Err(format!("Class not found: {}", class_pattern));
+            return Err(format!(
+                "Class not found: {}. It may not be loaded yet — use debug.wait_for_class to wait for it, or trigger the code path first.",
+                class_pattern
+            ));
         }
 
         let mut chosen = None;
@@ -626,18 +629,35 @@ impl RequestHandler {
             }
         }
 
-        let (class, method, line_code_index) = chosen.ok_or_else(|| {
-            let resolved_names: Vec<String> = classes
-                .iter()
-                .map(|class| class.signature.clone())
-                .collect();
-            format!(
-                "No method found containing line {} in class {}. Resolved classes: {}",
-                line,
-                class_pattern,
-                resolved_names.join(", ")
-            )
-        })?;
+        // If not found, build helpful error with available methods and line ranges
+        if chosen.is_none() {
+            let mut hint = format!(
+                "No method containing line {} in {}. Available methods:\n",
+                line, class_pattern
+            );
+            for class in &classes {
+                if let Ok(methods) = session.connection.get_methods(class.type_id).await {
+                    for method in &methods {
+                        if method.name.contains('$') || method.mod_bits & 0x1040 != 0 {
+                            continue;
+                        }
+                        if let Ok(lt) = session
+                            .connection
+                            .get_line_table(class.type_id, method.method_id)
+                            .await
+                        {
+                            if !lt.lines.is_empty() {
+                                let first = lt.lines.first().unwrap().line_number;
+                                let last = lt.lines.last().unwrap().line_number;
+                                hint.push_str(&format!("  {}:{}-{}\n", method.name, first, last));
+                            }
+                        }
+                    }
+                }
+            }
+            return Err(hint);
+        }
+        let (class, method, line_code_index) = chosen.unwrap();
 
         // Set the breakpoint!
         let request_id = session
