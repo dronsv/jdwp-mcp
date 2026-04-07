@@ -199,12 +199,12 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
                     let value_tag = read_u8(&mut buf)?;
                     // Skip the value data based on tag size
                     let skip_bytes: usize = match value_tag {
-                        86 => 0,                                        // void
-                        66 | 90 => 1,                                   // byte, boolean
-                        67 | 83 => 2,                                   // char, short
-                        70 | 73 => 4,                                   // float, int
-                        68 | 74 => 8,                                   // double, long
-                        76 | 115 | 116 | 103 | 108 | 99 | 91 => 8,     // object types
+                        86 => 0,                                   // void
+                        66 | 90 => 1,                              // byte, boolean
+                        67 | 83 => 2,                              // char, short
+                        70 | 73 => 4,                              // float, int
+                        68 | 74 => 8,                              // double, long
+                        76 | 115 | 116 | 103 | 108 | 99 | 91 => 8, // object types
                         _ => 0,
                     };
                     if skip_bytes > 0 {
@@ -255,7 +255,10 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
                 }
             }
             _ => {
-                warn!("Unsupported event kind: {}, cannot parse remaining events in composite packet", kind);
+                warn!(
+                    "Unsupported event kind: {}, cannot parse remaining events in composite packet",
+                    kind
+                );
                 break;
             }
         };
@@ -276,18 +279,26 @@ pub fn parse_event_packet(data: &[u8]) -> JdwpResult<EventSet> {
 /// Read a tagged value, format as compact string, advancing the buffer
 fn skip_and_format_value(tag: u8, buf: &mut &[u8]) -> JdwpResult<String> {
     match tag {
-        66 => Ok(crate::reader::read_i8(buf)?.to_string()),              // byte
-        67 => Ok(format!("'{}'", char::from_u32(crate::reader::read_u16(buf)? as u32).unwrap_or('?'))), // char
-        68 => Ok(format!("{}d", crate::reader::read_f64(buf)?)),         // double
-        70 => Ok(format!("{}f", crate::reader::read_f32(buf)?)),         // float
-        73 => Ok(read_i32(buf)?.to_string()),                            // int
-        74 => Ok(format!("{}L", read_i64(buf)?)),                        // long
-        83 => Ok(crate::reader::read_i16(buf)?.to_string()),             // short
+        66 => Ok(crate::reader::read_i8(buf)?.to_string()), // byte
+        67 => Ok(format!(
+            "'{}'",
+            char::from_u32(crate::reader::read_u16(buf)? as u32).unwrap_or('?')
+        )), // char
+        68 => Ok(format!("{}d", crate::reader::read_f64(buf)?)), // double
+        70 => Ok(format!("{}f", crate::reader::read_f32(buf)?)), // float
+        73 => Ok(read_i32(buf)?.to_string()),               // int
+        74 => Ok(format!("{}L", read_i64(buf)?)),           // long
+        83 => Ok(crate::reader::read_i16(buf)?.to_string()), // short
         90 => Ok(if read_u8(buf)? != 0 { "true" } else { "false" }.to_string()), // boolean
-        86 => Ok("void".to_string()),                                    // void
-        76 | 115 | 116 | 103 | 108 | 99 | 91 => {                       // object types
+        86 => Ok("void".to_string()),                       // void
+        76 | 115 | 116 | 103 | 108 | 99 | 91 => {
+            // object types
             let oid = read_u64(buf)?;
-            if oid == 0 { Ok("null".to_string()) } else { Ok(format!("@{:x}", oid)) }
+            if oid == 0 {
+                Ok("null".to_string())
+            } else {
+                Ok(format!("@{:x}", oid))
+            }
         }
         _ => Ok(format!("?tag={}", tag)),
     }

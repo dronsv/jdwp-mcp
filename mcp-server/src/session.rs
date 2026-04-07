@@ -14,6 +14,7 @@ pub type SessionId = String;
 pub struct DebugSession {
     pub connection: JdwpConnection,
     pub breakpoints: HashMap<String, BreakpointInfo>,
+    #[allow(dead_code)]
     pub threads: HashMap<String, ThreadInfo>,
     pub class_signatures: HashMap<u64, String>,
     pub active_step: Option<StepRequestInfo>,
@@ -32,6 +33,7 @@ pub struct BreakpointInfo {
     pub line: u32,
     pub method: Option<String>,
     pub enabled: bool,
+    #[allow(dead_code)]
     pub hit_count: u32,
     /// If set, variable name and expected value for server-side filtering.
     /// Format: "var_name==value" — auto-resumes if condition is false.
@@ -39,6 +41,7 @@ pub struct BreakpointInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ThreadInfo {
     pub id: String,
     pub name: String,

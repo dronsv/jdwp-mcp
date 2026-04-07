@@ -8,7 +8,6 @@ use crate::protocol::{CommandPacket, JdwpResult};
 use crate::reader::{read_f32, read_f64, read_i16, read_i64, read_i8, read_u16, read_u64, read_u8};
 use crate::types::{FrameId, ThreadId, Value, ValueData};
 use bytes::BufMut;
-use serde::{Deserialize, Serialize};
 
 /// Variable slot information for GetValues
 #[derive(Debug, Clone)]

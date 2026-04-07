@@ -257,7 +257,8 @@ impl RequestHandler {
             "debug.find_class" => self.handle_find_class(call_params.arguments).await,
             "debug.list_methods" => self.handle_list_methods(call_params.arguments).await,
             "debug.exception_breakpoint" => {
-                self.handle_exception_breakpoint(call_params.arguments).await
+                self.handle_exception_breakpoint(call_params.arguments)
+                    .await
             }
             "debug.eval" => self.handle_eval(call_params.arguments).await,
             "debug.set_value" => self.handle_set_value(call_params.arguments).await,
@@ -459,7 +460,10 @@ impl RequestHandler {
                     session.event_listener_task = Some(task_handle);
                 }
 
-                Ok(format!("connected {}:{} session={}", host, port, session_id))
+                Ok(format!(
+                    "connected {}:{} session={}",
+                    host, port, session_id
+                ))
             }
             Err(e) => Err(format!("Failed to connect: {}", e)),
         }
@@ -608,7 +612,7 @@ impl RequestHandler {
 
         let mut output = format!("{} breakpoints:\n", session.breakpoints.len());
 
-        for (_, bp) in session.breakpoints.iter() {
+        for bp in session.breakpoints.values() {
             let method = bp.method.as_deref().unwrap_or("");
             let enabled = if bp.enabled { "+" } else { "-" };
             output.push_str(&format!(
@@ -658,7 +662,10 @@ impl RequestHandler {
         // Remove from session
         session.breakpoints.remove(bp_id);
 
-        Ok(format!("cleared {} {}:{}", bp_id, bp_info.class_pattern, bp_info.line))
+        Ok(format!(
+            "cleared {} {}:{}",
+            bp_id, bp_info.class_pattern, bp_info.line
+        ))
     }
 
     async fn handle_continue(&self, _args: serde_json::Value) -> Result<String, String> {
@@ -949,11 +956,7 @@ impl RequestHandler {
             return Ok(format!("thread 0x{:x}: no frames", target_thread));
         }
 
-        let mut output = format!(
-            "thread 0x{:x}, {} frames:\n",
-            target_thread,
-            frames.len()
-        );
+        let mut output = format!("thread 0x{:x}, {} frames:\n", target_thread, frames.len());
 
         for (idx, frame) in frames.iter().enumerate() {
             // Resolve class and method names for compact display
@@ -995,14 +998,18 @@ impl RequestHandler {
                                 .collect();
 
                             if !active_vars.is_empty() {
-                                let slots: Vec<jdwp_client::stackframe::VariableSlot> =
-                                    active_vars
-                                        .iter()
-                                        .map(|v| jdwp_client::stackframe::VariableSlot {
-                                            slot: v.slot as i32,
-                                            sig_byte: v.signature.as_bytes().first().copied().unwrap_or(b'L'),
-                                        })
-                                        .collect();
+                                let slots: Vec<jdwp_client::stackframe::VariableSlot> = active_vars
+                                    .iter()
+                                    .map(|v| jdwp_client::stackframe::VariableSlot {
+                                        slot: v.slot as i32,
+                                        sig_byte: v
+                                            .signature
+                                            .as_bytes()
+                                            .first()
+                                            .copied()
+                                            .unwrap_or(b'L'),
+                                    })
+                                    .collect();
 
                                 if let Ok(values) = session
                                     .connection
@@ -1104,10 +1111,7 @@ impl RequestHandler {
             .ok_or_else(|| "JDWP returned no variable value".to_string())?;
         let formatted_value = Self::format_value_resolved(&mut session, value).await;
 
-        Ok(format!(
-            "{}={} ({})",
-            name, formatted_value, var.signature
-        ))
+        Ok(format!("{}={} ({})", name, formatted_value, var.signature))
     }
 
     async fn handle_select_thread(&self, args: serde_json::Value) -> Result<String, String> {
@@ -1168,10 +1172,7 @@ impl RequestHandler {
                 Err(_) => "?",
             };
 
-            output.push_str(&format!(
-                "0x{:x} {}{}\n",
-                thread_id, status, flags
-            ));
+            output.push_str(&format!("0x{:x} {}{}\n", thread_id, status, flags));
         }
 
         Ok(output)
@@ -1278,7 +1279,10 @@ impl RequestHandler {
                         )
                     }
                     jdwp_client::events::EventKind::FieldAccess {
-                        thread, field_id, object_id, ..
+                        thread,
+                        field_id,
+                        object_id,
+                        ..
                     } => {
                         format!(
                             "field_access thread=0x{:x} field=0x{:x} obj=0x{:x}",
@@ -1348,9 +1352,8 @@ impl RequestHandler {
             .get("object_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing 'object_id' parameter".to_string())?;
-        let object_id =
-            u64::from_str_radix(object_id_str.trim_start_matches("0x"), 16)
-                .map_err(|_| format!("Invalid object_id: {}", object_id_str))?;
+        let object_id = u64::from_str_radix(object_id_str.trim_start_matches("0x"), 16)
+            .map_err(|_| format!("Invalid object_id: {}", object_id_str))?;
 
         let session_guard = self
             .session_manager
@@ -1393,7 +1396,10 @@ impl RequestHandler {
             let is_static = field.mod_bits & 0x0008 != 0;
             let prefix = if is_static { "static " } else { "" };
             let fval = Self::format_value_resolved(&mut session, val).await;
-            output.push_str(&format!("  {}{}: {} = {}\n", prefix, field.name, field.signature, fval));
+            output.push_str(&format!(
+                "  {}{}: {} = {}\n",
+                prefix, field.name, field.signature, fval
+            ));
         }
         output.push('}');
 
@@ -1486,14 +1492,8 @@ impl RequestHandler {
         Ok(output)
     }
 
-    async fn handle_exception_breakpoint(
-        &self,
-        args: serde_json::Value,
-    ) -> Result<String, String> {
-        let caught = args
-            .get("caught")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+    async fn handle_exception_breakpoint(&self, args: serde_json::Value) -> Result<String, String> {
+        let caught = args.get("caught").and_then(|v| v.as_bool()).unwrap_or(true);
         let uncaught = args
             .get("uncaught")
             .and_then(|v| v.as_bool())
@@ -1600,24 +1600,16 @@ impl RequestHandler {
         // Invoke with no args, single-threaded
         let (return_value, exception_id) = session
             .connection
-            .invoke_method(
-                object_id,
-                target_thread,
-                ref_type_id,
-                method_id,
-                &[],
-                true,
-            )
+            .invoke_method(object_id, target_thread, ref_type_id, method_id, &[], true)
             .await
             .map_err(|e| format!("Invoke failed: {}", e))?;
 
         if exception_id != 0 {
             // Try to get exception message
-            let exc_msg =
-                match session.connection.get_string_value(exception_id).await {
-                    Ok(s) => s,
-                    Err(_) => format!("exception@0x{:x}", exception_id),
-                };
+            let exc_msg = match session.connection.get_string_value(exception_id).await {
+                Ok(s) => s,
+                Err(_) => format!("exception@0x{:x}", exception_id),
+            };
             return Err(format!("threw {}", exc_msg));
         }
 
@@ -1792,7 +1784,7 @@ impl RequestHandler {
 
         // 2. Active breakpoints
         if !session.breakpoints.is_empty() {
-            for (_, bp) in &session.breakpoints {
+            for bp in session.breakpoints.values() {
                 output.push_str(&format!(
                     "[bp] {} {}:{}\n",
                     bp.id, bp.class_pattern, bp.line
@@ -1816,17 +1808,18 @@ impl RequestHandler {
                     frames.len()
                 ));
                 for (idx, frame) in frames.iter().take(max_frames).enumerate() {
-                    let class_display =
-                        if let Some(sig) =
-                            Self::get_class_signature(&mut session, frame.location.class_id).await
-                        {
-                            Self::signature_to_display_name(&sig).unwrap_or(sig)
-                        } else {
-                            format!("0x{:x}", frame.location.class_id)
-                        };
+                    let class_display = if let Some(sig) =
+                        Self::get_class_signature(&mut session, frame.location.class_id).await
+                    {
+                        Self::signature_to_display_name(&sig).unwrap_or(sig)
+                    } else {
+                        format!("0x{:x}", frame.location.class_id)
+                    };
 
-                    let mname = if let Ok(methods) =
-                        session.connection.get_methods(frame.location.class_id).await
+                    let mname = if let Ok(methods) = session
+                        .connection
+                        .get_methods(frame.location.class_id)
+                        .await
                     {
                         methods
                             .iter()
@@ -1852,7 +1845,9 @@ impl RequestHandler {
                             let ci = frame.location.index;
                             let active: Vec<_> = var_table
                                 .iter()
-                                .filter(|v| ci >= v.code_index && ci < v.code_index + v.length as u64)
+                                .filter(|v| {
+                                    ci >= v.code_index && ci < v.code_index + v.length as u64
+                                })
                                 .collect();
 
                             if !active.is_empty() {
@@ -1997,12 +1992,7 @@ impl RequestHandler {
 
         let slots = vec![jdwp_client::stackframe::VariableSlot {
             slot: var.slot as i32,
-            sig_byte: var
-                .signature
-                .as_bytes()
-                .first()
-                .copied()
-                .unwrap_or(b'L'),
+            sig_byte: var.signature.as_bytes().first().copied().unwrap_or(b'L'),
         }];
 
         let values = match conn

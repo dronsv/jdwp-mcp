@@ -5,7 +5,7 @@
 use crate::commands::{command_sets, vm_commands};
 use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
-use crate::reader::{read_i32, read_string, read_u32, read_u8};
+use crate::reader::{read_i32, read_string, read_u8};
 use crate::types::ReferenceTypeId;
 use serde::{Deserialize, Serialize};
 
@@ -161,8 +161,11 @@ impl JdwpConnection {
     /// Returns the ObjectId of the new String.
     pub async fn create_string(&mut self, value: &str) -> JdwpResult<u64> {
         let id = self.next_id();
-        let mut packet =
-            CommandPacket::new(id, command_sets::VIRTUAL_MACHINE, vm_commands::CREATE_STRING);
+        let mut packet = CommandPacket::new(
+            id,
+            command_sets::VIRTUAL_MACHINE,
+            vm_commands::CREATE_STRING,
+        );
 
         crate::protocol::write_jdwp_string(&mut packet.data, value);
 

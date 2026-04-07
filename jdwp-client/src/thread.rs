@@ -6,7 +6,7 @@ use crate::commands::{command_sets, thread_commands};
 use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
 use crate::reader::{read_i32, read_u64};
-use crate::types::{FrameId, Location, MethodId, ReferenceTypeId, ThreadId};
+use crate::types::{FrameId, Location, ThreadId};
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 

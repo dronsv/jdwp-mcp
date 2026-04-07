@@ -5,7 +5,9 @@
 use crate::commands::{command_sets, object_reference_commands};
 use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
-use crate::reader::{read_f32, read_f64, read_i16, read_i32, read_i64, read_i8, read_u16, read_u64, read_u8};
+use crate::reader::{
+    read_f32, read_f64, read_i16, read_i32, read_i64, read_i8, read_u16, read_u64, read_u8,
+};
 use crate::types::{FieldId, ObjectId, ReferenceTypeId, Value, ValueData};
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
@@ -164,7 +166,6 @@ impl JdwpConnection {
 
         Ok((return_value, exception_id))
     }
-
 }
 
 /// Read a value based on its type tag (bounds-checked, same as in stackframe.rs)
@@ -203,8 +204,6 @@ fn read_value_by_tag(tag: u8, buf: &mut &[u8]) -> JdwpResult<ValueData> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_object_values_packet() {
         // Test that packet is constructed correctly

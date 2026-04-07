@@ -48,8 +48,6 @@ impl JdwpConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_string_value_packet() {
         // Test that packet is constructed correctly

@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn test_reply_packet_decode() {
         // Construct a reply packet manually with big-endian values
-        let mut reply_data = vec![
+        let reply_data = vec![
             0, 0, 0, 11, // length = 11 (big-endian)
             0, 0, 0, 1,    // id = 1 (big-endian)
             0x80, // reply flag

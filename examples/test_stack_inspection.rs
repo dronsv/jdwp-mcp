@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   (Will check every 2 seconds for 30 seconds)\n");
 
     // Poll for suspended threads (simple approach - in real impl we'd listen for events)
-    for attempt in 1..=15 {
+    for _attempt in 1..=15 {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Get all threads
