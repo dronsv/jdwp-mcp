@@ -11,6 +11,7 @@ mod handlers;
 mod protocol;
 mod session;
 mod tools;
+mod update_check;
 
 use handlers::RequestHandler;
 use protocol::*;
@@ -27,6 +28,9 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting JDWP MCP Server...");
+
+    // Background update check (non-blocking, best-effort)
+    update_check::spawn_update_check();
 
     let handler = RequestHandler::new();
 
