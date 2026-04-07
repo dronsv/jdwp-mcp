@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="navicore/jdwp-mcp"
+REPO="dronsv/jdwp-mcp"
 INSTALL_DIR="${JDWP_MCP_INSTALL_DIR:-/usr/local/bin}"
 
 # Detect OS

@@ -11,7 +11,7 @@ Ready-to-use text for submitting jdwp-mcp to registries.
 **Line to add:**
 
 ```markdown
-- [jdwp-mcp](https://github.com/navicore/jdwp-mcp) - Debug live JVMs through JDWP. Attach, set breakpoints, inspect stacks/objects, evaluate methods — 25 tools for autonomous Java debugging from any MCP agent.
+- [jdwp-mcp](https://github.com/dronsv/jdwp-mcp) - Debug live JVMs through JDWP. Attach, set breakpoints, inspect stacks/objects, evaluate methods — 25 tools for autonomous Java debugging from any MCP agent.
 ```
 
 **PR title:** `Add jdwp-mcp — Java/JVM debugging via JDWP`
@@ -33,7 +33,7 @@ variable mutation, thread management, and combined snapshot dumps.
 
 **Works with:** Claude Code, Codex, Cursor, or any MCP-compatible agent.
 
-**Install:** `pip install jdwp-mcp` or `cargo install --git https://github.com/navicore/jdwp-mcp`
+**Install:** `pip install jdwp-mcp` or `cargo install --git https://github.com/dronsv/jdwp-mcp`
 
 **License:** MIT
 ```
@@ -44,7 +44,7 @@ variable mutation, thread management, and combined snapshot dumps.
 
 **Fields:**
 - Name: jdwp-mcp
-- Repository: https://github.com/navicore/jdwp-mcp
+- Repository: https://github.com/dronsv/jdwp-mcp
 - Short description: Debug live JVMs through JDWP — attach, breakpoints, inspect stacks/objects, evaluate methods. 25 tools for autonomous Java debugging.
 - Category: Developer Tools
 - Tags: java, jvm, debugging, jdwp

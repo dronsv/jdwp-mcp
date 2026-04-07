@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/navicore/jdwp-mcp"
-Repository = "https://github.com/navicore/jdwp-mcp"
+Homepage = "https://github.com/dronsv/jdwp-mcp"
+Repository = "https://github.com/dronsv/jdwp-mcp"
 
 [project.scripts]
 jdwp-mcp = "jdwp_mcp:main"

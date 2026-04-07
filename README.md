@@ -43,7 +43,7 @@ One prompt. Six tool calls. Lock contention + root cause identified.
 ### 1. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/navicore/jdwp-mcp/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/dronsv/jdwp-mcp/main/install.sh | sh
 ```
 
 <details>
@@ -54,10 +54,10 @@ curl -fsSL https://raw.githubusercontent.com/navicore/jdwp-mcp/main/install.sh |
 pip install jdwp-mcp
 
 # cargo
-cargo install --git https://github.com/navicore/jdwp-mcp
+cargo install --git https://github.com/dronsv/jdwp-mcp
 
 # from source
-git clone https://github.com/navicore/jdwp-mcp && cd jdwp-mcp && cargo build --release
+git clone https://github.com/dronsv/jdwp-mcp && cd jdwp-mcp && cargo build --release
 ```
 
 </details>

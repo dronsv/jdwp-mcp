@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.request import urlopen
 import json
 
-REPO = "navicore/jdwp-mcp"
+REPO = "dronsv/jdwp-mcp"
 BINARY_NAME = "jdwp-mcp"
 
 
