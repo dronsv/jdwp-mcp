@@ -56,7 +56,39 @@ Use this when the bug happens during startup and you can't set breakpoints fast 
 COMMON ERRORS:
 - "Connection refused" → JVM not started with JDWP flags, or wrong port
 - "THREAD_NOT_SUSPENDED" → use debug.pause or hit a breakpoint before debug.eval
-- "No method found at line X" → use debug.list_methods to find valid line ranges"#;
+- "No method found at line X" → use debug.list_methods to find valid line ranges
+
+EXAMPLE 1 — "API returns wrong data, find why":
+  debug.attach localhost:5005
+  debug.trace class_pattern=com.example.service    ← arm tracing
+  [send the HTTP request that returns wrong data]
+  debug.trace_result                               ← see actual call path
+  → trace shows: OrderService.getOrder → PriceCalculator.apply → DiscountRule.evaluate
+  debug.set_breakpoint class=DiscountRule line=42  ← now you know where to look
+  [send the request again]
+  debug.wait_for_event
+  debug.get_stack                                  ← see variables at decision point
+  → found: discountPercent=0.5 but expected 0.1, wrong rule matched
+
+EXAMPLE 2 — "App hangs on certain requests":
+  debug.attach localhost:5005
+  debug.pause                                      ← freeze everything
+  debug.list_threads                               ← find stuck threads
+  → thread pool-3-thread-7: suspended
+  debug.get_stack thread_id=0x...
+  → #0 Database.query:218 sql="SELECT ... WHERE id=?"
+  → #1 UserRepository.findById:45 locked on monitor @3f2a
+  debug.inspect object_id=0x3f2a                   ← what is the lock object?
+  → ConnectionPool{activeCount=50, maxSize=50}     ← pool exhausted!
+
+EXAMPLE 3 — "Exception during startup, need to catch it early":
+  [start app]: java -agentlib:jdwp=...,suspend=y -jar app.jar
+  debug.attach localhost:5005                      ← JVM is frozen, waiting
+  debug.exception_breakpoint class_pattern=NullPointerException
+  debug.continue                                   ← let JVM start
+  debug.wait_for_event                             ← catches the NPE
+  debug.get_stack                                  ← see where it happened
+  → #0 ConfigLoader.loadProperties:89 config=null  ← config file missing"#;
 
 pub struct RequestHandler {
     session_manager: SessionManager,
