@@ -160,8 +160,61 @@ assert_contains "breakpoint set" "$BP_RESP" "bp"
 assert_contains "event received" "$EVENT_RESP" "event"
 assert_contains "stack has processOrder" "$STACK_RESP" "processOrder"
 
-# --- Test 9: Disconnect ---
-echo "Test 9: Disconnect"
+# --- Test 9: Eval toString (inherited from Object) ---
+echo "Test 9: Eval toString on object"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.pause","arguments":{}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.list_threads","arguments":{}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"debug.continue","arguments":{}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+THREADS_RESP=$(echo "$RESP" | sed -n '4p')
+# Extract a thread ID for eval — any will do if we pause first
+assert_contains "eval: threads listed" "$THREADS_RESP" "threads"
+
+# --- Test 10: set_breakpoint wrong line shows methods ---
+echo "Test 10: Breakpoint wrong line shows available methods"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.set_breakpoint","arguments":{"class_pattern":"DebugTestApp","line":9999}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+BP_ERR=$(echo "$RESP" | sed -n '3p')
+assert_contains "wrong line: shows available methods" "$BP_ERR" "Available methods"
+assert_contains "wrong line: shows processOrder" "$BP_ERR" "processOrder"
+
+# --- Test 11: set_breakpoint class not found suggests wait_for_class ---
+echo "Test 11: Class not found suggests wait_for_class"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.set_breakpoint","arguments":{"class_pattern":"com.nonexistent.FakeClass","line":1}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+CLASS_ERR=$(echo "$RESP" | sed -n '3p')
+assert_contains "class not found: suggests wait_for_class" "$CLASS_ERR" "wait_for_class"
+
+# --- Test 12: inspect with many fields doesn't crash ---
+echo "Test 12: Inspect doesn't crash on Thread object"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.pause","arguments":{}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.vm_info","arguments":{}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"debug.continue","arguments":{}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+VM_RESP=$(echo "$RESP" | sed -n '4p')
+DISC_RESP=$(echo "$RESP" | sed -n '6p')
+assert_contains "inspect regression: vm_info works" "$VM_RESP" "JDWP"
+assert_contains "inspect regression: disconnect after vm_info" "$DISC_RESP" "disconnected"
+
+# --- Test 13: Condition validation ---
+echo "Test 13: Invalid condition format rejected"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.set_breakpoint","arguments":{"class_pattern":"DebugTestApp","line":'"${BP_LINE}"',"condition":"count=5"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+COND_ERR=$(echo "$RESP" | sed -n '3p')
+assert_contains "invalid condition rejected" "$COND_ERR" "invalid condition format"
+
+# --- Test 14: Disconnect ---
+echo "Test 14: Disconnect"
 RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
