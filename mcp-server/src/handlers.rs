@@ -1762,7 +1762,7 @@ impl RequestHandler {
                                 if let Some(m) = methods.iter().find(|m| {
                                     m.name == method_name && m.signature.starts_with("()")
                                 }) {
-                                    found = Some((ref_type_id, m.method_id));
+                                    found = Some((iface_id, m.method_id));
                                     break;
                                 }
                             }
@@ -2283,8 +2283,10 @@ impl RequestHandler {
                 jdwp_client::events::EventKind::MethodEntry { thread, location } => {
                     raw.push((*thread, location.class_id, location.method_id, true));
                 }
-                jdwp_client::events::EventKind::MethodExit { thread, .. } => {
-                    raw.push((*thread, 0, 0, false));
+                jdwp_client::events::EventKind::MethodExit {
+                    thread, location, ..
+                } => {
+                    raw.push((*thread, location.class_id, location.method_id, false));
                 }
                 _ => {}
             }
@@ -2303,7 +2305,9 @@ impl RequestHandler {
                 if is_aggregate {
                     // Record entry timestamp keyed by (thread, class, depth)
                     let depth = *trace.depth_per_thread.entry(thread).or_insert(0);
-                    trace.entry_times.insert((thread, class_id, depth), now);
+                    trace
+                        .entry_times
+                        .insert((thread, class_id, method_id, depth), now);
                     // Increment call count
                     let stats = trace
                         .agg_stats
@@ -2340,7 +2344,9 @@ impl RequestHandler {
 
                 if is_aggregate {
                     // Find entry time and accumulate elapsed
-                    if let Some(entry_time) = trace.entry_times.remove(&(thread, class_id, *depth))
+                    if let Some(entry_time) = trace
+                        .entry_times
+                        .remove(&(thread, class_id, method_id, *depth))
                     {
                         let elapsed = now.duration_since(entry_time).as_millis() as u64;
                         if let Some(stats) = trace.agg_stats.get_mut(&(class_id, method_id)) {

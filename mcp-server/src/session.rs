@@ -37,7 +37,7 @@ pub struct TraceState {
     pub aggregate: bool,
     pub calls: Vec<TraceCall>,
     pub agg_stats: HashMap<(u64, u64), AggMethodStats>,
-    pub entry_times: HashMap<(u64, u64, u32), Instant>,
+    pub entry_times: HashMap<(u64, u64, u64, u32), Instant>,
     pub depth_per_thread: HashMap<u64, u32>,
     pub start_time: Instant,
     pub max_calls: usize,
