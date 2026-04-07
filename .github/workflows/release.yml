@@ -113,6 +113,8 @@ jobs:
   pypi:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -126,11 +128,10 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
 
-      - name: Build and publish
+      - name: Build
         run: |
           pip install hatch
           hatch build
-          hatch publish
-        env:
-          HATCH_INDEX_USER: __token__
-          HATCH_INDEX_AUTH: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
