@@ -1,0 +1,5 @@
+services:
+  debug-test-app:
+    build: .
+    ports:
+      - "5005:5005"
