@@ -2,6 +2,7 @@
 //
 // Handles initialize, list tools, and debug tool execution
 
+use crate::config::*;
 use crate::protocol::*;
 use crate::session::{SessionManager, StepRequestInfo};
 use crate::tools;
@@ -962,7 +963,8 @@ impl RequestHandler {
         session: &mut crate::session::DebugSession,
         value: &jdwp_client::types::Value,
     ) -> String {
-        const MAX_FIELDS: usize = 8;
+        use crate::config::*;
+        let max_fields = AUTO_RESOLVE_MAX_FIELDS;
 
         // Non-object or null → leaf
         let object_id = match &value.data {
@@ -1014,7 +1016,7 @@ impl RequestHandler {
         }
 
         // Large objects: just show class name + field count (don't fetch values)
-        if instance_fields.len() > 20 {
+        if instance_fields.len() > AUTO_RESOLVE_LARGE_OBJECT_THRESHOLD {
             return format!(
                 "{}@{:x}({} fields)",
                 class_name,
@@ -1025,7 +1027,7 @@ impl RequestHandler {
 
         let field_ids: Vec<_> = instance_fields
             .iter()
-            .take(MAX_FIELDS)
+            .take(max_fields)
             .map(|f| f.field_id)
             .collect();
         let field_values = match session
@@ -1040,15 +1042,15 @@ impl RequestHandler {
         let mut pairs = Vec::new();
         for (field, val) in instance_fields
             .iter()
-            .take(MAX_FIELDS)
+            .take(max_fields)
             .zip(field_values.iter())
         {
             let fval = Self::format_value_leaf(session, val).await;
             pairs.push(format!("{}={}", field.name, fval));
         }
 
-        let extra = if instance_fields.len() > MAX_FIELDS {
-            format!(", ...+{}", instance_fields.len() - MAX_FIELDS)
+        let extra = if instance_fields.len() > max_fields {
+            format!(", ...+{}", instance_fields.len() - max_fields)
         } else {
             String::new()
         };
@@ -1462,7 +1464,7 @@ impl RequestHandler {
             .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(30000)
-            .min(120_000); // Cap at 2 minutes to prevent blocking the server
+            .min(MAX_WAIT_TIMEOUT_MS); // Cap at 2 minutes to prevent blocking the server
         let session_guard = self
             .session_manager
             .get_current_session()
@@ -1546,7 +1548,7 @@ impl RequestHandler {
 
         // Check if it's an array
         if let Ok(length) = session.connection.get_array_length(object_id).await {
-            let show = length.min(20);
+            let show = length.min(INSPECT_MAX_ARRAY_ELEMENTS);
             let mut output = format!("{}[{}] = [\n", class_name, length);
             if show > 0 {
                 match session
@@ -1556,8 +1558,12 @@ impl RequestHandler {
                 {
                     Ok(elems) => {
                         for (i, val) in elems.iter().enumerate() {
-                            // Use compact format (no JDWP calls) to avoid connection issues
-                            let fval = val.format_compact();
+                            // Small arrays: resolve strings. Large: compact only.
+                            let fval = if length <= INSPECT_SMALL_ARRAY_THRESHOLD {
+                                Self::format_value_leaf(&mut session, val).await
+                            } else {
+                                val.format_compact()
+                            };
                             output.push_str(&format!("  [{}] {}\n", i, fval));
                         }
                     }
@@ -1566,8 +1572,11 @@ impl RequestHandler {
                     }
                 }
             }
-            if length > 20 {
-                output.push_str(&format!("  ...+{} more\n", length - 20));
+            if length > INSPECT_MAX_ARRAY_ELEMENTS {
+                output.push_str(&format!(
+                    "  ...+{} more\n",
+                    length - INSPECT_MAX_ARRAY_ELEMENTS
+                ));
             }
             output.push(']');
             return Ok(output);
@@ -1593,32 +1602,33 @@ impl RequestHandler {
             return Ok(format!("{} (no fields)", class_name));
         }
 
-        // Large objects: show metadata only (field names + types, no values)
-        const SAFE_FIELD_LIMIT: usize = 30;
-        if total > SAFE_FIELD_LIMIT {
+        // Adaptive inspect:
+        //   <= 10 fields: full values with string resolution (leaf format)
+        //   11-30 fields: values in compact format (no extra JDWP calls per field)
+        //   > 30 fields: metadata only (names + types, no value fetch)
+
+        if total > INSPECT_LARGE_OBJECT_THRESHOLD {
             let mut output = format!(
-                "{} ({} instance + {} static fields — too large for safe value read)\n",
+                "{} ({} instance + {} static fields)\n",
                 class_name,
                 instance_fields.len(),
                 static_fields.len()
             );
-            for f in instance_fields.iter().take(30) {
+            for f in instance_fields.iter().take(INSPECT_LARGE_OBJECT_THRESHOLD) {
                 output.push_str(&format!("  {}: {}\n", f.name, f.signature));
             }
-            if instance_fields.len() > 30 {
-                output.push_str(&format!("  ...+{} more\n", instance_fields.len() - 30));
+            if instance_fields.len() > INSPECT_LARGE_OBJECT_THRESHOLD {
+                output.push_str(&format!(
+                    "  ...+{} more\n",
+                    instance_fields.len() - INSPECT_LARGE_OBJECT_THRESHOLD
+                ));
             }
             return Ok(output);
         }
 
-        // Safe to read values
-        const MAX_INSPECT_FIELDS: usize = 20;
-        let capped_fields: Vec<_> = instance_fields
-            .iter()
-            .chain(static_fields.iter())
-            .take(MAX_INSPECT_FIELDS)
-            .collect();
-        let field_ids: Vec<_> = capped_fields.iter().map(|f| f.field_id).collect();
+        // Fetch values (safe — <= 30 fields)
+        let all_fields: Vec<_> = instance_fields.iter().chain(static_fields.iter()).collect();
+        let field_ids: Vec<_> = all_fields.iter().map(|f| f.field_id).collect();
         let values = match session
             .connection
             .get_object_values(object_id, field_ids)
@@ -1627,29 +1637,24 @@ impl RequestHandler {
             Ok(v) => v,
             Err(e) => {
                 let mut output = format!("{} (failed to read values: {})\n", class_name, e);
-                for f in &capped_fields {
+                for f in &all_fields {
                     output.push_str(&format!("  {}: {}\n", f.name, f.signature));
                 }
                 return Ok(output);
             }
         };
 
+        let is_small = total <= INSPECT_SMALL_OBJECT_THRESHOLD;
         let mut output = format!("{} {{\n", class_name);
-        for (field, val) in capped_fields.iter().zip(values.iter()) {
+        for (field, val) in all_fields.iter().zip(values.iter()) {
             let is_static = field.mod_bits & 0x0008 != 0;
             let prefix = if is_static { "static " } else { "" };
-            // Use leaf format (no recursive resolve) to avoid cascading failures
-            let fval = Self::format_value_leaf(&mut session, val).await;
-            output.push_str(&format!(
-                "  {}{}: {} = {}\n",
-                prefix, field.name, field.signature, fval
-            ));
-        }
-        if total > MAX_INSPECT_FIELDS {
-            output.push_str(&format!(
-                "  ...+{} more fields\n",
-                total - MAX_INSPECT_FIELDS
-            ));
+            let fval = if is_small {
+                Self::format_value_leaf(&mut session, val).await
+            } else {
+                val.format_compact()
+            };
+            output.push_str(&format!("  {}{} = {}\n", prefix, field.name, fval));
         }
         output.push('}');
 
@@ -2548,7 +2553,7 @@ impl RequestHandler {
             entry_times: std::collections::HashMap::new(),
             depth_per_thread: std::collections::HashMap::new(),
             start_time: std::time::Instant::now(),
-            max_calls: 500,
+            max_calls: TRACE_MAX_CALLS,
         });
 
         Ok(format!(
@@ -2688,7 +2693,7 @@ impl RequestHandler {
             .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(30000)
-            .min(120_000);
+            .min(MAX_WAIT_TIMEOUT_MS);
 
         let session_guard = self
             .session_manager

@@ -7,6 +7,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{error, info};
 
+pub mod config;
 mod handlers;
 mod protocol;
 mod session;
