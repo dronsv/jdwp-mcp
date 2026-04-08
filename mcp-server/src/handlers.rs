@@ -38,6 +38,9 @@ STRATEGY E — Request path tracing (best for "which code path did my request ta
   debug.trace (class_pattern) → send HTTP request to app → debug.trace_result
   Shows the exact call sequence with depth: which methods were called and in what order.
   Use this when a breakpoint doesn't hit and you don't know which path the request took.
+  WARNING: trace has high overhead on frequently-called classes (JDWP sends an event per call).
+  Use narrow patterns (com.example.MyService, not com.example.*) and only for infrequent methods.
+  For performance profiling, use Java Flight Recorder (jcmd <pid> JFR.start) instead of trace.
 
 KEY TIPS:
 - debug.snapshot gives event + breakpoints + stack in one call — use it after any stop event
