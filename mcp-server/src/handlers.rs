@@ -1015,8 +1015,12 @@ impl RequestHandler {
             return format!("{}@{:x}", class_name, object_id);
         }
 
-        // Large objects: just show class name + field count (don't fetch values)
-        if instance_fields.len() > AUTO_RESOLVE_LARGE_OBJECT_THRESHOLD {
+        // Collections and large objects: just show class + count
+        let is_collection = class_name.contains("List")
+            || class_name.contains("Map")
+            || class_name.contains("Set")
+            || class_name.contains("Queue");
+        if is_collection || instance_fields.len() > AUTO_RESOLVE_LARGE_OBJECT_THRESHOLD {
             return format!(
                 "{}@{:x}({} fields)",
                 class_name,
@@ -1580,6 +1584,24 @@ impl RequestHandler {
             }
             output.push(']');
             return Ok(output);
+        }
+
+        // Collections (ArrayList, HashMap, etc.): use size() + toString()
+        // instead of field inspection — their internal fields (elementData,
+        // table, etc.) are large arrays that crash the JDWP connection.
+        let is_collection = class_name.contains("List")
+            || class_name.contains("Map")
+            || class_name.contains("Set")
+            || class_name.contains("Queue")
+            || class_name.contains("Collection")
+            || class_name.contains("Vector")
+            || class_name.contains("Stack");
+
+        if is_collection {
+            return Ok(format!(
+                "{} — use debug.eval object_id=0x{:x} method=size to get size, or method=toString for contents",
+                class_name, object_id
+            ));
         }
 
         let fields = session
