@@ -112,6 +112,12 @@ pub mod object_reference_commands {
     pub const IS_COLLECTED: u8 = 9;
 }
 
+// ArrayReference commands (set 13)
+pub mod array_reference_commands {
+    pub const LENGTH: u8 = 1;
+    pub const GET_VALUES: u8 = 2;
+}
+
 // StackFrame commands (set 16)
 pub mod stack_frame_commands {
     pub const GET_VALUES: u8 = 1;

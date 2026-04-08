@@ -7,6 +7,7 @@
 // - Variable evaluation
 // - Execution control
 
+pub mod array;
 pub mod commands;
 pub mod connection;
 pub mod eventloop;

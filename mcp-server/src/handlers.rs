@@ -970,9 +970,34 @@ impl RequestHandler {
             _ => return Self::format_value_leaf(session, value).await,
         };
 
-        // Array → just tag
+        // Array → show length + first elements
         if value.tag == 91 {
-            return format!("array@{:x}", object_id);
+            let length = match session.connection.get_array_length(object_id).await {
+                Ok(l) => l,
+                Err(_) => return format!("array@{:x}", object_id),
+            };
+            if length == 0 {
+                return "[]".to_string();
+            }
+            let show = length.min(5);
+            let elems = match session
+                .connection
+                .get_array_values(object_id, 0, show)
+                .await
+            {
+                Ok(v) => v,
+                Err(_) => return format!("[{} elements]", length),
+            };
+            let mut parts = Vec::new();
+            for val in &elems {
+                parts.push(Self::format_value_leaf(session, val).await);
+            }
+            let suffix = if length > 5 {
+                format!(", ...+{}", length - 5)
+            } else {
+                String::new()
+            };
+            return format!("[{}{}]", parts.join(", "), suffix);
         }
 
         // Resolve class
@@ -1528,6 +1553,34 @@ impl RequestHandler {
             Some(sig) => Self::signature_to_display_name(&sig).unwrap_or(sig),
             None => "?".to_string(),
         };
+
+        // Check if it's an array
+        if let Ok(length) = session.connection.get_array_length(object_id).await {
+            let show = length.min(20);
+            let mut output = format!("{}[{}] = [\n", class_name, length);
+            if show > 0 {
+                match session
+                    .connection
+                    .get_array_values(object_id, 0, show)
+                    .await
+                {
+                    Ok(elems) => {
+                        for (i, val) in elems.iter().enumerate() {
+                            let fval = Self::format_value_leaf(&mut session, val).await;
+                            output.push_str(&format!("  [{}] {}\n", i, fval));
+                        }
+                    }
+                    Err(e) => {
+                        output.push_str(&format!("  (failed to read elements: {})\n", e));
+                    }
+                }
+            }
+            if length > 20 {
+                output.push_str(&format!("  ...+{} more\n", length - 20));
+            }
+            output.push(']');
+            return Ok(output);
+        }
 
         let fields = session
             .connection
