@@ -1850,6 +1850,14 @@ impl RequestHandler {
             .and_then(|v| v.as_str())
             .unwrap_or("toString");
 
+        // Capture raw args — string creation deferred until session is available
+        let raw_args: Vec<serde_json::Value> = args
+            .get("args")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let has_args = !raw_args.is_empty();
+
         // Block dangerous methods that could kill the JVM or execute commands
         const BLOCKED_METHODS: &[&str] = &[
             "exit", "halt", "exec", "destroy", "shutdown", "kill", "stop", "suspend",
@@ -1883,6 +1891,40 @@ impl RequestHandler {
             }
         }
 
+        // Build eval args (needs session for string creation)
+        let mut eval_args = Vec::new();
+        for arg in &raw_args {
+            let val = if let Some(i) = arg.as_i64() {
+                jdwp_client::types::Value {
+                    tag: b'I',
+                    data: jdwp_client::types::ValueData::Int(i as i32),
+                }
+            } else if let Some(b) = arg.as_bool() {
+                jdwp_client::types::Value {
+                    tag: b'Z',
+                    data: jdwp_client::types::ValueData::Boolean(b),
+                }
+            } else if let Some(s) = arg.as_str() {
+                let string_id = session
+                    .connection
+                    .create_string(s)
+                    .await
+                    .map_err(|e| format!("Failed to create string arg: {}", e))?;
+                jdwp_client::types::Value {
+                    tag: 115,
+                    data: jdwp_client::types::ValueData::Object(string_id),
+                }
+            } else if arg.is_null() {
+                jdwp_client::types::Value {
+                    tag: b'L',
+                    data: jdwp_client::types::ValueData::Object(0),
+                }
+            } else {
+                return Err(format!("Unsupported arg type: {}", arg));
+            };
+            eval_args.push(val);
+        }
+
         // Get object's class
         let ref_type_id = session
             .connection
@@ -1890,58 +1932,102 @@ impl RequestHandler {
             .await
             .map_err(|e| format!("Failed to get object type: {}", e))?;
 
-        // Find the method — search: declared methods → interfaces → superclass chain → Object
-        let (invoke_class_id, method_id) =
-            {
-                let mut found = None;
-
-                // 1. Check declared methods on the object's class
-                if let Ok(methods) = session.connection.get_methods(ref_type_id).await {
-                    if let Some(m) = methods
-                        .iter()
-                        .find(|m| m.name == method_name && m.signature.starts_with("()"))
-                    {
-                        found = Some((ref_type_id, m.method_id));
+        // Find the method — search: declared methods → interfaces → Object
+        // Match by name + arg count (zero-arg or matching provided args)
+        let match_sig = |sig: &str| -> bool {
+            if !has_args {
+                sig.starts_with("()")
+            } else {
+                // Count params in signature: (Ljava/lang/Object;I)V → 2 params
+                // Simple heuristic: count semicolons + count of I/J/Z/B/C/S/F/D outside L..;
+                let params = &sig[1..sig.find(')').unwrap_or(1)];
+                if params.is_empty() {
+                    return false;
+                }
+                let mut count = 0usize;
+                let mut in_class = false;
+                for c in params.chars() {
+                    if in_class {
+                        if c == ';' {
+                            in_class = false;
+                            count += 1;
+                        }
+                    } else if c == 'L' || c == '[' {
+                        if c == 'L' {
+                            in_class = true;
+                        } else {
+                            // array — skip, next char is element type
+                        }
+                    } else {
+                        count += 1; // primitive
                     }
                 }
+                count == eval_args.len()
+            }
+        };
 
-                // 2. Check interfaces (e.g. Map.Entry.getKey)
-                if found.is_none() {
-                    if let Ok(ifaces) = session.connection.get_interfaces(ref_type_id).await {
-                        for iface_id in ifaces {
-                            if let Ok(methods) = session.connection.get_methods(iface_id).await {
-                                if let Some(m) = methods.iter().find(|m| {
-                                    m.name == method_name && m.signature.starts_with("()")
-                                }) {
-                                    found = Some((iface_id, m.method_id));
-                                    break;
-                                }
+        let (invoke_class_id, method_id) = {
+            let mut found = None;
+
+            // 1. Check declared methods on the object's class
+            if let Ok(methods) = session.connection.get_methods(ref_type_id).await {
+                if let Some(m) = methods
+                    .iter()
+                    .find(|m| m.name == method_name && match_sig(&m.signature))
+                {
+                    found = Some((ref_type_id, m.method_id));
+                }
+            }
+
+            // 2. Check interfaces (e.g. Map.Entry.getKey, List.get)
+            if found.is_none() {
+                if let Ok(ifaces) = session.connection.get_interfaces(ref_type_id).await {
+                    for iface_id in ifaces {
+                        if let Ok(methods) = session.connection.get_methods(iface_id).await {
+                            if let Some(m) = methods
+                                .iter()
+                                .find(|m| m.name == method_name && match_sig(&m.signature))
+                            {
+                                found = Some((iface_id, m.method_id));
+                                break;
                             }
                         }
                     }
                 }
+            }
 
-                // 3. Check java.lang.Object (toString, hashCode, getClass)
-                if found.is_none() {
-                    if let Ok(object_classes) = session
-                        .connection
-                        .classes_by_signature("Ljava/lang/Object;")
-                        .await
-                    {
-                        if let Some(oc) = object_classes.first() {
-                            if let Ok(methods) = session.connection.get_methods(oc.type_id).await {
-                                if let Some(m) = methods.iter().find(|m| {
-                                    m.name == method_name && m.signature.starts_with("()")
-                                }) {
-                                    found = Some((oc.type_id, m.method_id));
-                                }
+            // 3. Check java.lang.Object (toString, hashCode, getClass)
+            if found.is_none() {
+                if let Ok(object_classes) = session
+                    .connection
+                    .classes_by_signature("Ljava/lang/Object;")
+                    .await
+                {
+                    if let Some(oc) = object_classes.first() {
+                        if let Ok(methods) = session.connection.get_methods(oc.type_id).await {
+                            if let Some(m) = methods
+                                .iter()
+                                .find(|m| m.name == method_name && match_sig(&m.signature))
+                            {
+                                found = Some((oc.type_id, m.method_id));
                             }
                         }
                     }
                 }
+            }
 
-                found.ok_or_else(|| format!("no zero-arg method '{}' found", method_name))?
-            };
+            found.ok_or_else(|| {
+                if has_args {
+                    format!(
+                        "no method '{}' with {} arg(s) found",
+                        method_name,
+                        eval_args.len()
+                    )
+                } else {
+                    format!("no zero-arg method '{}' found", method_name)
+                }
+            })?
+        };
 
         // Invoke with no args, single-threaded
         let (return_value, exception_id) = session
@@ -1951,7 +2037,7 @@ impl RequestHandler {
                 target_thread,
                 invoke_class_id,
                 method_id,
-                &[],
+                &eval_args,
                 true,
             )
             .await

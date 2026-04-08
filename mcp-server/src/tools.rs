@@ -198,12 +198,13 @@ pub fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "debug.eval".to_string(),
-            description: "Invoke a no-arg method on an object (default: toString)".to_string(),
+            description: "Invoke a method on an object. Supports args: list.get(0), map.get(\"key\")".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "object_id": { "type": "string", "description": "hex e.g. 0x1a3f" },
                     "method": { "type": "string", "default": "toString" },
+                    "args": { "type": "array", "description": "method arguments: [0], [\"key\"], [true]" },
                     "thread_id": { "type": "string", "description": "hex, optional" }
                 },
                 "required": ["object_id"]
