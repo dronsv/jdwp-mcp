@@ -1,6 +1,7 @@
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.*;
 
 /**
  * Test application for jdwp-mcp feature testing.
@@ -77,6 +78,81 @@ public class DebugTestApp {
         }
     }
 
+    // === Scenario 7: Deep hierarchy for inspect stress test (issue #3/#4) ===
+    static abstract class BaseEntity {
+        long id;
+        String createdAt;
+        String updatedAt;
+        String createdBy;
+        String updatedBy;
+        boolean deleted;
+        int version;
+        Map<String, Object> metadata;
+        List<String> tags;
+        String description;
+    }
+
+    static abstract class AuditableEntity extends BaseEntity {
+        String auditLog;
+        List<String> changeHistory;
+        Map<String, String> permissions;
+        String ownerGroup;
+        boolean locked;
+        String lockReason;
+        long lockTimestamp;
+        String lastAccessedBy;
+        long lastAccessedAt;
+        int accessCount;
+    }
+
+    static class ComplexProduct extends AuditableEntity {
+        String sku;
+        String name;
+        String brand;
+        String category;
+        double price;
+        double weight;
+        int stockCount;
+        boolean available;
+        List<String> images;
+        Map<String, String> attributes;
+        List<ComplexProduct> relatedProducts;
+        String warehouse;
+        double rating;
+        int reviewCount;
+
+        ComplexProduct(String sku, String name) {
+            this.sku = sku;
+            this.name = name;
+            this.id = ThreadLocalRandom.current().nextLong();
+            this.createdAt = "2024-01-01";
+            this.updatedAt = "2024-06-15";
+            this.metadata = new HashMap<>();
+            this.metadata.put("origin", "factory");
+            this.metadata.put("batch", "2024-Q2");
+            this.tags = List.of("electronics", "sale");
+            this.changeHistory = List.of("created", "updated", "reviewed");
+            this.permissions = Map.of("read", "all", "write", "admin");
+            this.attributes = Map.of("color", "black", "size", "M");
+            this.images = List.of("front.jpg", "back.jpg", "side.jpg");
+            this.relatedProducts = new ArrayList<>();
+            this.price = 99.99;
+            this.weight = 0.5;
+            this.stockCount = 42;
+            this.available = true;
+            this.rating = 4.5;
+            this.reviewCount = 128;
+        }
+
+        @Override
+        public String toString() {
+            return "ComplexProduct{sku=" + sku + ", name=" + name + "}";
+        }
+    }
+
+    // Accessible from worker thread for inspect testing
+    static volatile ComplexProduct testProduct;
+
     public static void main(String[] args) throws Exception {
         System.out.println("DebugTestApp started. JDWP listening on port 5005.");
         System.out.println("Scenarios: deadlock, counter, exceptions, field watch, object inspect");
@@ -112,6 +188,11 @@ public class DebugTestApp {
         Thread workerThread = new Thread(() -> {
             User alice = new User("Alice", 30, true, List.of("admin", "user"));
             User bob = new User("Bob", 25, false, List.of("user"));
+
+            // Scenario 7: Complex object for inspect stress test
+            testProduct = new ComplexProduct("SKU-001", "Widget Pro");
+            testProduct.relatedProducts.add(new ComplexProduct("SKU-002", "Widget Lite"));
+            testProduct.relatedProducts.add(new ComplexProduct("SKU-003", "Widget Max"));
 
             while (true) {
                 int count = requestCount.incrementAndGet();

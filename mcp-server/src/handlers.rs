@@ -1506,6 +1506,10 @@ impl RequestHandler {
         let object_id = u64::from_str_radix(object_id_str.trim_start_matches("0x"), 16)
             .map_err(|_| format!("Invalid object_id: {}", object_id_str))?;
 
+        if object_id == 0 {
+            return Err("null object (id=0)".to_string());
+        }
+
         let session_guard = self
             .session_manager
             .get_current_session()
@@ -1730,6 +1734,9 @@ impl RequestHandler {
             .ok_or_else(|| "Missing 'object_id'".to_string())?;
         let object_id = u64::from_str_radix(object_id_str.trim_start_matches("0x"), 16)
             .map_err(|_| format!("Invalid object_id: {}", object_id_str))?;
+        if object_id == 0 {
+            return Err("null object (id=0)".to_string());
+        }
         let method_name = args
             .get("method")
             .and_then(|v| v.as_str())
