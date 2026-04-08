@@ -1033,6 +1033,16 @@ impl RequestHandler {
             return format!("{}@{:x}", class_name, object_id);
         }
 
+        // Large objects: just show class name + field count (don't fetch values)
+        if instance_fields.len() > 20 {
+            return format!(
+                "{}@{:x}({} fields)",
+                class_name,
+                object_id,
+                instance_fields.len()
+            );
+        }
+
         let field_ids: Vec<_> = instance_fields
             .iter()
             .take(MAX_FIELDS)
@@ -1588,13 +1598,45 @@ impl RequestHandler {
             .await
             .map_err(|e| format!("Failed to get fields: {}", e))?;
 
-        if fields.is_empty() {
+        let instance_fields: Vec<_> = fields
+            .iter()
+            .filter(|f| f.mod_bits & 0x0008 == 0 && !f.name.starts_with('$'))
+            .collect();
+        let static_fields: Vec<_> = fields
+            .iter()
+            .filter(|f| f.mod_bits & 0x0008 != 0 && !f.name.starts_with('$'))
+            .collect();
+        let total = instance_fields.len() + static_fields.len();
+
+        if total == 0 {
             return Ok(format!("{} (no fields)", class_name));
         }
 
-        // Cap at 20 fields to avoid killing the JDWP connection on large objects
+        // Large objects: show metadata only (field names + types, no values)
+        const SAFE_FIELD_LIMIT: usize = 30;
+        if total > SAFE_FIELD_LIMIT {
+            let mut output = format!(
+                "{} ({} instance + {} static fields — too large for safe value read)\n",
+                class_name,
+                instance_fields.len(),
+                static_fields.len()
+            );
+            for f in instance_fields.iter().take(30) {
+                output.push_str(&format!("  {}: {}\n", f.name, f.signature));
+            }
+            if instance_fields.len() > 30 {
+                output.push_str(&format!("  ...+{} more\n", instance_fields.len() - 30));
+            }
+            return Ok(output);
+        }
+
+        // Safe to read values
         const MAX_INSPECT_FIELDS: usize = 20;
-        let capped_fields: Vec<_> = fields.iter().take(MAX_INSPECT_FIELDS).collect();
+        let capped_fields: Vec<_> = instance_fields
+            .iter()
+            .chain(static_fields.iter())
+            .take(MAX_INSPECT_FIELDS)
+            .collect();
         let field_ids: Vec<_> = capped_fields.iter().map(|f| f.field_id).collect();
         let values = match session
             .connection
@@ -1603,7 +1645,6 @@ impl RequestHandler {
         {
             Ok(v) => v,
             Err(e) => {
-                // Fallback: show field names without values
                 let mut output = format!("{} (failed to read values: {})\n", class_name, e);
                 for f in &capped_fields {
                     output.push_str(&format!("  {}: {}\n", f.name, f.signature));
@@ -1623,10 +1664,10 @@ impl RequestHandler {
                 prefix, field.name, field.signature, fval
             ));
         }
-        if fields.len() > MAX_INSPECT_FIELDS {
+        if total > MAX_INSPECT_FIELDS {
             output.push_str(&format!(
                 "  ...+{} more fields\n",
-                fields.len() - MAX_INSPECT_FIELDS
+                total - MAX_INSPECT_FIELDS
             ));
         }
         output.push('}');
