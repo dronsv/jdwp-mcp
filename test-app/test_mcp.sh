@@ -211,7 +211,7 @@ RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.set_breakpoint","arguments":{"class_pattern":"DebugTestApp","line":'"${BP_LINE}"',"condition":"count=5"}}}
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
 COND_ERR=$(echo "$RESP" | sed -n '3p')
-assert_contains "invalid condition rejected" "$COND_ERR" "invalid condition format"
+assert_contains "invalid condition rejected" "$COND_ERR" "invalid condition"
 
 # --- Test 14: Inspect null object doesn't crash server (issue #3/#4) ---
 echo "Test 14: Inspect null object survives"

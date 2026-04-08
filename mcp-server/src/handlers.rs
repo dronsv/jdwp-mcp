@@ -697,15 +697,9 @@ impl RequestHandler {
             .map(|s| s.to_string());
 
         if let Some(ref c) = condition {
-            let has_op = c.contains("==")
-                || c.contains("!=")
-                || c.contains(">=")
-                || c.contains("<=")
-                || c.contains('>')
-                || c.contains('<');
-            if !has_op {
+            if Self::parse_condition(c).is_none() {
                 return Err(format!(
-                    "invalid condition format '{}', expected var_name==value or var>N, var<N, var!=value, var>=N, var<=N",
+                    "invalid condition '{}', expected: var==value, var!=value, var>N, var<N, var>=N, var<=N",
                     c
                 ));
             }
@@ -1901,9 +1895,17 @@ impl RequestHandler {
         let mut eval_args = Vec::new();
         for arg in &raw_args {
             let val = if let Some(i) = arg.as_i64() {
-                jdwp_client::types::Value {
-                    tag: b'I',
-                    data: jdwp_client::types::ValueData::Int(i as i32),
+                // Use long for values outside i32 range
+                if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
+                    jdwp_client::types::Value {
+                        tag: b'I',
+                        data: jdwp_client::types::ValueData::Int(i as i32),
+                    }
+                } else {
+                    jdwp_client::types::Value {
+                        tag: b'J',
+                        data: jdwp_client::types::ValueData::Long(i),
+                    }
                 }
             } else if let Some(b) = arg.as_bool() {
                 jdwp_client::types::Value {
