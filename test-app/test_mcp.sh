@@ -213,8 +213,47 @@ RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"
 COND_ERR=$(echo "$RESP" | sed -n '3p')
 assert_contains "invalid condition rejected" "$COND_ERR" "invalid condition format"
 
-# --- Test 14: Disconnect ---
-echo "Test 14: Disconnect"
+# --- Test 14: Inspect null object doesn't crash server (issue #3/#4) ---
+echo "Test 14: Inspect null object survives"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.inspect","arguments":{"object_id":"0x0"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.pause","arguments":{}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"debug.continue","arguments":{}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+NULL_RESP=$(echo "$RESP" | sed -n '3p')
+PAUSE_RESP=$(echo "$RESP" | sed -n '4p')
+DISC_RESP=$(echo "$RESP" | sed -n '6p')
+assert_contains "null inspect: error returned" "$NULL_RESP" "null object"
+assert_contains "null inspect: server still alive (pause works)" "$PAUSE_RESP" "paused"
+assert_contains "null inspect: clean disconnect" "$DISC_RESP" "disconnected"
+
+# --- Test 15: Eval null object doesn't crash server ---
+echo "Test 15: Eval null object survives"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.eval","arguments":{"object_id":"0x0"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.vm_info","arguments":{}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+EVAL_RESP=$(echo "$RESP" | sed -n '3p')
+VM_RESP=$(echo "$RESP" | sed -n '4p')
+assert_contains "null eval: error returned" "$EVAL_RESP" "null object"
+assert_contains "null eval: server still alive (vm_info works)" "$VM_RESP" "JDWP"
+
+# --- Test 16: Inspect invalid object returns error, not crash ---
+echo "Test 16: Inspect invalid object survives"
+RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.inspect","arguments":{"object_id":"0xDEADBEEF"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"debug.vm_info","arguments":{}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')
+INVAL_RESP=$(echo "$RESP" | sed -n '3p')
+VM_RESP2=$(echo "$RESP" | sed -n '4p')
+assert_contains "invalid inspect: error returned" "$INVAL_RESP" "INVALID_OBJECT\|error\|Failed"
+assert_contains "invalid inspect: server still alive" "$VM_RESP2" "JDWP"
+
+# --- Test 17: Disconnect ---
+echo "Test 17: Disconnect"
 RESP=$(call_mcp_multi '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"debug.attach","arguments":{"host":"localhost","port":5005}}}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"debug.disconnect","arguments":{}}}')

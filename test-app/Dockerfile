@@ -1,7 +1,7 @@
 FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /app
 COPY src/DebugTestApp.java .
-RUN javac DebugTestApp.java
+RUN javac -g DebugTestApp.java
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
