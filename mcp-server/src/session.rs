@@ -25,6 +25,8 @@ pub struct DebugSession {
     pub last_event_notify: Arc<Notify>,
     pub event_listener_task: Option<JoinHandle<()>>,
     pub trace_state: Option<TraceState>,
+    pub vm_dead: bool,
+    pub disconnect_reason: Option<String>,
 }
 
 #[derive(Debug)]
@@ -133,6 +135,8 @@ impl SessionManager {
             last_event_notify: Arc::new(Notify::new()),
             event_listener_task: None,
             trace_state: None,
+            vm_dead: false,
+            disconnect_reason: None,
         };
 
         let mut state = self.state.lock().await;

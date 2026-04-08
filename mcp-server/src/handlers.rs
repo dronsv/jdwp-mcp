@@ -318,8 +318,30 @@ impl RequestHandler {
                 data: None,
             })?;
 
+        // Check if session is dead before routing (except attach/disconnect)
+        let tool_name = call_params.name.as_str();
+        if tool_name != "debug.attach" && tool_name != "debug.disconnect" {
+            if let Some(session_guard) = self.session_manager.get_current_session().await {
+                let session = session_guard.lock().await;
+                if session.vm_dead {
+                    let reason = session
+                        .disconnect_reason
+                        .as_deref()
+                        .unwrap_or("unknown reason");
+                    return Err(JsonRpcError {
+                        code: INTERNAL_ERROR,
+                        message: format!(
+                            "Session dead: {}. Use debug.attach to reconnect.",
+                            reason
+                        ),
+                        data: None,
+                    });
+                }
+            }
+        }
+
         // Route to appropriate handler based on tool name
-        let result = match call_params.name.as_str() {
+        let result = match tool_name {
             "debug.attach" => self.handle_attach(call_params.arguments).await,
             "debug.set_breakpoint" => self.handle_set_breakpoint(call_params.arguments).await,
             "debug.list_breakpoints" => self.handle_list_breakpoints(call_params.arguments).await,
@@ -351,7 +373,7 @@ impl RequestHandler {
             "debug.trace" => self.handle_trace(call_params.arguments).await,
             "debug.trace_result" => self.handle_trace_result(call_params.arguments).await,
             "debug.wait_for_class" => self.handle_wait_for_class(call_params.arguments).await,
-            _ => Err(format!("Unknown tool: {}", call_params.name)),
+            _ => Err(format!("Unknown tool: {}", tool_name)),
         };
 
         match result {
@@ -541,14 +563,39 @@ impl RequestHandler {
                                     session_manager.get_current_session().await
                                 {
                                     let mut session = session_guard.lock().await;
+
+                                    // Detect VM death
+                                    let is_vm_dead = event_set.events.iter().any(|e| {
+                                        matches!(e.details, jdwp_client::events::EventKind::VMDeath)
+                                    });
+                                    if is_vm_dead {
+                                        session.vm_dead = true;
+                                        session.disconnect_reason =
+                                            Some("JVM terminated (VM_DEATH)".to_string());
+                                    }
+
                                     session.last_event = Some(event_set);
                                     session.last_event_seq += 1;
                                     session.last_event_notify.notify_waiters();
+
+                                    if is_vm_dead {
+                                        break;
+                                    }
                                 } else {
                                     break;
                                 }
                             } else {
-                                break; // Connection closed
+                                // Connection closed — mark session
+                                if let Some(session_guard) =
+                                    session_manager.get_current_session().await
+                                {
+                                    let mut session = session_guard.lock().await;
+                                    session.vm_dead = true;
+                                    session.disconnect_reason =
+                                        Some("JDWP connection closed".to_string());
+                                    session.last_event_notify.notify_waiters();
+                                }
+                                break;
                             }
                         }
                         info!("Event listener task stopped");
