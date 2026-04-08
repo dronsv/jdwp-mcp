@@ -554,9 +554,18 @@ impl RequestHandler {
                     session.event_listener_task = Some(task_handle);
                 }
 
+                // Show VM info so user can verify correct JVM (issue #2)
+                let vm_desc = {
+                    let mut session = session_guard.lock().await;
+                    match session.connection.get_version().await {
+                        Ok(v) => format!(" ({} {})", v.vm_name, v.vm_version),
+                        Err(_) => String::new(),
+                    }
+                };
+
                 Ok(format!(
-                    "connected {}:{} session={}",
-                    host, port, session_id
+                    "connected {}:{}{} session={}",
+                    host, port, vm_desc, session_id
                 ))
             }
             Err(e) => Err(format!("Failed to connect: {}", e)),
