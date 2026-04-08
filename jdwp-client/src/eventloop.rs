@@ -12,9 +12,9 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{mpsc, oneshot, Notify};
 use tracing::{debug, error, info, warn};
 
-/// Maximum allowed JDWP packet size (10MB)
-/// This prevents memory exhaustion from malicious or buggy JVMs
-const MAX_PACKET_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum allowed JDWP packet size (50MB)
+/// AllClasses on large apps (Tomcat, Spring) can return 10-30MB of class signatures
+const MAX_PACKET_SIZE: usize = 50 * 1024 * 1024;
 
 /// Maximum time to wait for a command reply before considering it lost
 const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);

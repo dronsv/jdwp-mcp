@@ -597,9 +597,15 @@ impl RequestHandler {
         let classes = Self::resolve_classes(&mut session, class_pattern).await?;
 
         if classes.is_empty() {
+            let total = session
+                .connection
+                .all_classes()
+                .await
+                .map(|c| c.len())
+                .unwrap_or(0);
             return Err(format!(
-                "Class not found: {}. It may not be loaded yet — use debug.wait_for_class to wait for it, or trigger the code path first.",
-                class_pattern
+                "Class not found: {} ({} classes loaded). Try full package name or use debug.wait_for_class.",
+                class_pattern, total
             ));
         }
 
@@ -1587,7 +1593,17 @@ impl RequestHandler {
         let classes = Self::resolve_classes(&mut session, pattern).await?;
 
         if classes.is_empty() {
-            return Ok(format!("no classes matching '{}'", pattern));
+            // Diagnostic: show how many classes the JVM reports
+            let total = session
+                .connection
+                .all_classes()
+                .await
+                .map(|c| c.len())
+                .unwrap_or(0);
+            return Ok(format!(
+                "no classes matching '{}' ({} classes loaded in JVM). Try the full package name, e.g. com.example.MyClass",
+                pattern, total
+            ));
         }
 
         let mut output = String::new();
