@@ -265,7 +265,8 @@ pub fn get_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "clear": { "type": "boolean", "default": true, "description": "stop tracing after retrieval" }
+                    "clear": { "type": "boolean", "default": true, "description": "stop tracing after retrieval" },
+                    "min_ms": { "type": "integer", "default": 0, "description": "aggregate mode: only show methods >= this ms" }
                 }
             }),
         },

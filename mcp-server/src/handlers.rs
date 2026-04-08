@@ -516,14 +516,14 @@ impl RequestHandler {
 
                                 // Phase 2: Evaluate condition WITHOUT holding lock (uses connection_clone)
                                 let should_skip = if let Some((thread_id, condition)) = cond_info {
-                                    let parts: Vec<&str> = condition.splitn(2, "==").collect();
-                                    if parts.len() == 2 {
-                                        let var_name = parts[0].trim().to_string();
-                                        let expected = parts[1].trim().to_string();
+                                    if let Some((var_name, op, expected)) =
+                                        Self::parse_condition(&condition)
+                                    {
                                         Self::eval_condition(
                                             &connection_clone,
                                             thread_id,
                                             &var_name,
+                                            &op,
                                             &expected,
                                         )
                                         .await
@@ -697,9 +697,15 @@ impl RequestHandler {
             .map(|s| s.to_string());
 
         if let Some(ref c) = condition {
-            if c.splitn(2, "==").count() != 2 {
+            let has_op = c.contains("==")
+                || c.contains("!=")
+                || c.contains(">=")
+                || c.contains("<=")
+                || c.contains('>')
+                || c.contains('<');
+            if !has_op {
                 return Err(format!(
-                    "invalid condition format '{}', expected var_name==value",
+                    "invalid condition format '{}', expected var_name==value or var>N, var<N, var!=value, var>=N, var<=N",
                     c
                 ));
             }
@@ -2437,10 +2443,27 @@ impl RequestHandler {
 
     /// Evaluate a conditional breakpoint expression using a connection clone (no lock held).
     /// Returns true if the condition does NOT match (should skip/resume).
+    /// Parse condition string into (var_name, operator, value)
+    fn parse_condition(condition: &str) -> Option<(String, String, String)> {
+        // Order matters: check two-char ops before single-char
+        for op in &["==", "!=", ">=", "<=", ">", "<"] {
+            if let Some(pos) = condition.find(op) {
+                let var = condition[..pos].trim().to_string();
+                let val = condition[pos + op.len()..].trim().to_string();
+                if !var.is_empty() && !val.is_empty() {
+                    return Some((var, op.to_string(), val));
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns true if condition NOT met (should skip/resume)
     async fn eval_condition(
         conn: &jdwp_client::JdwpConnection,
         thread_id: u64,
         var_name: &str,
+        op: &str,
         expected: &str,
     ) -> bool {
         let mut conn = conn.clone();
@@ -2487,7 +2510,26 @@ impl RequestHandler {
             None => return false,
         };
 
-        actual.trim_matches('"') != expected.trim_matches('"')
+        let actual_clean = actual.trim_matches('"');
+        let expected_clean = expected.trim_matches('"');
+
+        // Try numeric comparison for >, <, >=, <=
+        let numeric_result = actual_clean
+            .parse::<f64>()
+            .ok()
+            .zip(expected_clean.parse::<f64>().ok());
+
+        let condition_met = match op {
+            "==" => actual_clean == expected_clean,
+            "!=" => actual_clean != expected_clean,
+            ">" => numeric_result.is_some_and(|(a, e)| a > e),
+            "<" => numeric_result.is_some_and(|(a, e)| a < e),
+            ">=" => numeric_result.is_some_and(|(a, e)| a >= e),
+            "<=" => numeric_result.is_some_and(|(a, e)| a <= e),
+            _ => actual_clean == expected_clean,
+        };
+
+        !condition_met // true = should skip (condition NOT met)
     }
 
     /// Collect trace events into session trace state. Returns true if events were trace-only.
@@ -2689,6 +2731,7 @@ impl RequestHandler {
 
     async fn handle_trace_result(&self, args: serde_json::Value) -> Result<String, String> {
         let clear = args.get("clear").and_then(|v| v.as_bool()).unwrap_or(true);
+        let min_ms = args.get("min_ms").and_then(|v| v.as_u64()).unwrap_or(0);
 
         let session_guard = self
             .session_manager
@@ -2715,10 +2758,22 @@ impl RequestHandler {
                     elapsed
                 )
             } else {
-                let mut stats: Vec<_> = trace.agg_stats.values().collect();
+                let mut stats: Vec<_> = trace
+                    .agg_stats
+                    .values()
+                    .filter(|s| s.total_ms >= min_ms)
+                    .collect();
                 stats.sort_by(|a, b| b.total_ms.cmp(&a.total_ms));
 
-                let mut out = format!("trace: {} calls, {}ms (aggregate)\n", total_calls, elapsed);
+                let filtered_note = if min_ms > 0 {
+                    format!(" (>= {}ms)", min_ms)
+                } else {
+                    String::new()
+                };
+                let mut out = format!(
+                    "trace: {} calls, {}ms{}\n",
+                    total_calls, elapsed, filtered_note
+                );
                 for s in &stats {
                     let class_name = Self::get_class_signature(&mut session, s.class_id)
                         .await
