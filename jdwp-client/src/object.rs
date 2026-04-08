@@ -5,10 +5,8 @@
 use crate::commands::{command_sets, object_reference_commands};
 use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
-use crate::reader::{
-    read_f32, read_f64, read_i16, read_i32, read_i64, read_i8, read_u16, read_u64, read_u8,
-};
-use crate::types::{FieldId, ObjectId, ReferenceTypeId, Value, ValueData};
+use crate::reader::{read_i32, read_u64, read_u8, read_value_by_tag};
+use crate::types::{FieldId, ObjectId, ReferenceTypeId, Value};
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 
@@ -165,40 +163,6 @@ impl JdwpConnection {
         let exception_id = read_u64(&mut data)?;
 
         Ok((return_value, exception_id))
-    }
-}
-
-/// Read a value based on its type tag (bounds-checked, same as in stackframe.rs)
-fn read_value_by_tag(tag: u8, buf: &mut &[u8]) -> JdwpResult<ValueData> {
-    match tag {
-        // 'B' = byte
-        66 => Ok(ValueData::Byte(read_i8(buf)?)),
-        // 'C' = char
-        67 => Ok(ValueData::Char(read_u16(buf)?)),
-        // 'D' = double
-        68 => Ok(ValueData::Double(read_f64(buf)?)),
-        // 'F' = float
-        70 => Ok(ValueData::Float(read_f32(buf)?)),
-        // 'I' = int
-        73 => Ok(ValueData::Int(read_i32(buf)?)),
-        // 'J' = long
-        74 => Ok(ValueData::Long(read_i64(buf)?)),
-        // 'S' = short
-        83 => Ok(ValueData::Short(read_i16(buf)?)),
-        // 'Z' = boolean
-        90 => Ok(ValueData::Boolean(read_u8(buf)? != 0)),
-        // 'V' = void
-        86 => Ok(ValueData::Void),
-        // Object types (L, s, t, g, l, c, [)
-        // L = object, s = string, t = thread, g = thread group, l = class loader, c = class object, [ = array
-        76 | 115 | 116 | 103 | 108 | 99 | 91 => {
-            let object_id = read_u64(buf)?;
-            Ok(ValueData::Object(object_id))
-        }
-        _ => Err(crate::protocol::JdwpError::Protocol(format!(
-            "Unknown value tag: {}",
-            tag
-        ))),
     }
 }
 

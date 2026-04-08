@@ -107,3 +107,25 @@ pub fn read_f64(buf: &mut &[u8]) -> JdwpResult<f64> {
     }
     Ok(buf.get_f64())
 }
+
+/// Read a tagged JDWP value based on its type tag (bounds-checked).
+/// Shared by stackframe and object value reading.
+pub fn read_value_by_tag(tag: u8, buf: &mut &[u8]) -> JdwpResult<crate::types::ValueData> {
+    use crate::types::ValueData;
+    match tag {
+        66 => Ok(ValueData::Byte(read_i8(buf)?)),
+        67 => Ok(ValueData::Char(read_u16(buf)?)),
+        68 => Ok(ValueData::Double(read_f64(buf)?)),
+        70 => Ok(ValueData::Float(read_f32(buf)?)),
+        73 => Ok(ValueData::Int(read_i32(buf)?)),
+        74 => Ok(ValueData::Long(read_i64(buf)?)),
+        83 => Ok(ValueData::Short(read_i16(buf)?)),
+        90 => Ok(ValueData::Boolean(read_u8(buf)? != 0)),
+        86 => Ok(ValueData::Void),
+        76 | 115 | 116 | 103 | 108 | 99 | 91 => {
+            let object_id = read_u64(buf)?;
+            Ok(ValueData::Object(object_id))
+        }
+        _ => Err(JdwpError::Protocol(format!("Unknown value tag: {}", tag))),
+    }
+}

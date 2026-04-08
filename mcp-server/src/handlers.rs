@@ -946,7 +946,10 @@ impl RequestHandler {
             if let jdwp_client::types::ValueData::Object(oid) = &value.data {
                 if *oid != 0 {
                     return match session.connection.get_string_value(*oid).await {
-                        Ok(s) if s.len() > MAX_STR => format!("\"{}...\"", &s[..MAX_STR]),
+                        Ok(s) if s.len() > MAX_STR => {
+                            let truncated: String = s.chars().take(MAX_STR).collect();
+                            format!("\"{}...\"", truncated)
+                        }
                         Ok(s) => format!("\"{}\"", s),
                         Err(_) => format!("str@{:x}", oid),
                     };
@@ -1843,6 +1846,17 @@ impl RequestHandler {
             .get("method")
             .and_then(|v| v.as_str())
             .unwrap_or("toString");
+
+        // Block dangerous methods that could kill the JVM or execute commands
+        const BLOCKED_METHODS: &[&str] = &[
+            "exit", "halt", "exec", "destroy", "shutdown", "kill", "stop", "suspend",
+        ];
+        if BLOCKED_METHODS.contains(&method_name) {
+            return Err(format!(
+                "method '{}' is blocked for safety — it could terminate the JVM or execute system commands",
+                method_name
+            ));
+        }
 
         let session_guard = self
             .session_manager
