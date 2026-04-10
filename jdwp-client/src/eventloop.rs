@@ -84,8 +84,15 @@ impl EventLoopHandle {
     }
 
     /// Wait for the next event (blocking).
+    ///
     /// Does not hold the channel lock across the await point, so concurrent
     /// `try_recv_event` calls will not be blocked.
+    ///
+    /// # Single-consumer invariant
+    /// Only one task may call `recv_event` concurrently. The event loop uses
+    /// `Notify::notify_one` which stores at most one permit, so the "try_recv
+    /// returns Empty, then an event arrives before `notified().await` subscribes"
+    /// race is impossible: the stored permit is consumed on the next subscribe.
     pub async fn recv_event(&self) -> Option<EventSet> {
         loop {
             // Brief lock to attempt a receive
@@ -97,7 +104,9 @@ impl EventLoopHandle {
                     Err(mpsc::error::TryRecvError::Empty) => {}
                 }
             }
-            // Lock released — wait for notification that a new event was enqueued
+            // Lock released — wait for notification that a new event was enqueued.
+            // With notify_one(), a notification sent between lock release and
+            // this subscribe is stored as a permit and consumed here immediately.
             self.event_notify.notified().await;
         }
     }
@@ -234,10 +243,8 @@ async fn event_loop_task(
 
                                     // Send event with backpressure — blocks if channel is full,
                                     // which is correct for a debugger (events must not be lost)
-                                    match event_tx.send(event_set).await {
-                                        Ok(_) => {
-                                            event_notify.notify_waiters();
-                                        }
+                                    match publish_event(&event_tx, &event_notify, event_set).await {
+                                        Ok(_) => {}
                                         Err(_) => {
                                             info!("Event receiver dropped, shutting down event loop");
                                             break;
@@ -260,6 +267,22 @@ async fn event_loop_task(
     }
 
     info!("Event loop shutting down");
+}
+
+/// Send an event to the consumer channel and wake the waiter.
+///
+/// Uses `notify_one` (not `notify_waiters`) so that a wake-up sent while the
+/// single consumer is between `try_recv` and `notified().await` is stored as
+/// a permit rather than lost. See `EventLoopHandle::recv_event` for the
+/// consumer side of this contract.
+async fn publish_event(
+    event_tx: &mpsc::Sender<EventSet>,
+    event_notify: &Arc<Notify>,
+    event_set: EventSet,
+) -> Result<(), mpsc::error::SendError<EventSet>> {
+    event_tx.send(event_set).await?;
+    event_notify.notify_one();
+    Ok(())
 }
 
 /// Read a packet from the socket and determine if it's a reply or event
@@ -305,4 +328,115 @@ async fn read_packet(reader: &mut OwnedReadHalf) -> JdwpResult<(bool, u32, Vec<u
     let is_reply = flags == REPLY_FLAG;
 
     Ok((is_reply, packet_id, full_packet))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::{Event, EventKind};
+
+    impl EventLoopHandle {
+        /// Test-only constructor that bypasses the TCP event loop.
+        /// Returns the handle plus a producer half (event sender + notifier).
+        fn new_for_test() -> (Self, mpsc::Sender<EventSet>, Arc<Notify>) {
+            let (_command_tx, _command_rx) = mpsc::channel::<CommandRequest>(32);
+            let (event_tx, event_rx) = mpsc::channel::<EventSet>(256);
+            let event_notify = Arc::new(Notify::new());
+            let handle = EventLoopHandle {
+                command_tx: _command_tx,
+                event_rx: Arc::new(tokio::sync::Mutex::new(event_rx)),
+                event_notify: event_notify.clone(),
+            };
+            (handle, event_tx, event_notify)
+        }
+    }
+
+    fn dummy_event(id: i32) -> EventSet {
+        EventSet {
+            suspend_policy: 0,
+            events: vec![Event {
+                kind: 90, // VM_START
+                request_id: id,
+                details: EventKind::VMStart { thread: 0 },
+            }],
+        }
+    }
+
+    /// Mirror of `recv_event`'s inner loop, but with two `Barrier` sync
+    /// points between releasing the rx lock and subscribing to `notified()`.
+    /// The first barrier signals "lock released", the second waits until
+    /// the test has driven `publish_event` — this deterministically parks
+    /// the consumer in the exact race window the bug required.
+    ///
+    /// We can't do this on real `recv_event` because it transitions from
+    /// "lock released" to "notified subscribed" without an await point,
+    /// so there is no externally-observable moment to fire the producer in.
+    async fn recv_event_with_sync(
+        handle: &EventLoopHandle,
+        released: Arc<tokio::sync::Barrier>,
+        published: Arc<tokio::sync::Barrier>,
+    ) -> Option<EventSet> {
+        loop {
+            {
+                let mut rx = handle.event_rx.lock().await;
+                match rx.try_recv() {
+                    Ok(event) => return Some(event),
+                    Err(mpsc::error::TryRecvError::Disconnected) => return None,
+                    Err(mpsc::error::TryRecvError::Empty) => {}
+                }
+            }
+            released.wait().await;
+            published.wait().await;
+            handle.event_notify.notified().await;
+        }
+    }
+
+    /// Regression test for issue #9 (dronsv/jdwp-mcp).
+    ///
+    /// `publish_event` must wake a consumer that is between releasing the
+    /// rx lock and subscribing to `notified()`. With `notify_waiters()`
+    /// the wake-up is lost (notify_waiters stores no permit); with
+    /// `notify_one()` the wake-up is stored as a permit and consumed by
+    /// the consumer's subsequent subscribe.
+    ///
+    /// The consumer runs `recv_event_with_sync` so we can deterministically
+    /// park it between lock release and notified subscribe. `publish_event`
+    /// is the real production helper — a regression that swaps `notify_one`
+    /// → `notify_waiters` makes this test time out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn publish_event_wakes_consumer_in_race_window() {
+        let (handle, tx, _notify) = EventLoopHandle::new_for_test();
+        let released = Arc::new(tokio::sync::Barrier::new(2));
+        let published = Arc::new(tokio::sync::Barrier::new(2));
+
+        let released_c = released.clone();
+        let published_c = published.clone();
+        let handle_c = handle.clone();
+        let consumer = tokio::spawn(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                recv_event_with_sync(&handle_c, released_c, published_c),
+            )
+            .await
+        });
+
+        // Step 1: consumer releases rx lock and parks at `released`
+        released.wait().await;
+
+        // Step 2: fire the producer while consumer is NOT yet subscribed
+        publish_event(&tx, &handle.event_notify, dummy_event(42))
+            .await
+            .unwrap();
+
+        // Step 3: release the consumer; it now subscribes via notified().await
+        // With notify_one: the permit stored in step 2 is consumed immediately.
+        // With notify_waiters: the notification was lost; consumer hangs.
+        published.wait().await;
+
+        let received = consumer
+            .await
+            .expect("consumer panicked")
+            .expect("recv_event hung in race window — publish_event regression");
+        assert!(received.is_some(), "expected Some(event), got None");
+    }
 }
