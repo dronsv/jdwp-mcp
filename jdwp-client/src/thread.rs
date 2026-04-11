@@ -5,7 +5,7 @@
 use crate::commands::{command_sets, thread_commands};
 use crate::connection::JdwpConnection;
 use crate::protocol::{CommandPacket, JdwpResult};
-use crate::reader::{read_i32, read_u64};
+use crate::reader::{read_i32, read_string, read_u64};
 use crate::types::{FrameId, Location, ThreadId};
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,18 @@ pub struct Frame {
 }
 
 impl JdwpConnection {
+    /// Get the name of a thread (ThreadReference.Name command)
+    pub async fn get_thread_name(&mut self, thread_id: ThreadId) -> JdwpResult<String> {
+        let id = self.next_id();
+        let mut packet =
+            CommandPacket::new(id, command_sets::THREAD_REFERENCE, thread_commands::NAME);
+        packet.data.put_u64(thread_id);
+        let reply = self.send_command(packet).await?;
+        reply.check_error()?;
+        let mut data = reply.data();
+        read_string(&mut data)
+    }
+
     /// Get stack frames for a thread (ThreadReference.Frames command)
     pub async fn get_frames(
         &mut self,

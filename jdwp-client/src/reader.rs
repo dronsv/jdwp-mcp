@@ -84,7 +84,7 @@ pub fn read_i16(buf: &mut &[u8]) -> JdwpResult<i16> {
     Ok(buf.get_i16())
 }
 
-/// Read an i32 (signed)
+/// Read an i64 (signed)
 pub fn read_i64(buf: &mut &[u8]) -> JdwpResult<i64> {
     if buf.remaining() < 8 {
         return Err(JdwpError::Protocol("Not enough data for i64".to_string()));
