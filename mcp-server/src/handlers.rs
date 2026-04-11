@@ -887,6 +887,21 @@ impl RequestHandler {
             .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
     }
 
+    /// Resolve a bytecode index to a source line number using the method's line table.
+    /// Returns the largest line whose code_index is <= `bytecode_index`, or `None` if the
+    /// line table is empty or the index is before the first entry.
+    fn resolve_source_line(
+        line_table: &jdwp_client::method::LineTable,
+        bytecode_index: u64,
+    ) -> Option<i32> {
+        line_table
+            .lines
+            .iter()
+            .rev()
+            .find(|e| e.line_code_index <= bytecode_index)
+            .map(|e| e.line_number)
+    }
+
     fn event_thread_id(event_set: &jdwp_client::EventSet) -> Option<u64> {
         let event = event_set.events.first()?;
         match &event.details {
@@ -991,8 +1006,9 @@ impl RequestHandler {
         session: &mut crate::session::DebugSession,
         value: &jdwp_client::types::Value,
     ) -> String {
+        use jdwp_client::types::TypeTag;
         const MAX_STR: usize = 80;
-        if value.tag == 115 {
+        if value.tag == TypeTag::String as u8 {
             if let jdwp_client::types::ValueData::Object(oid) = &value.data {
                 if *oid != 0 {
                     return match session.connection.get_string_value(*oid).await {
@@ -1017,17 +1033,22 @@ impl RequestHandler {
         value: &jdwp_client::types::Value,
     ) -> String {
         use crate::config::*;
+        use jdwp_client::types::TypeTag;
         let max_fields = AUTO_RESOLVE_MAX_FIELDS;
 
         // Non-object or null → leaf
         let object_id = match &value.data {
-            jdwp_client::types::ValueData::Object(oid) if *oid != 0 && value.tag != 115 => *oid,
+            jdwp_client::types::ValueData::Object(oid)
+                if *oid != 0 && value.tag != TypeTag::String as u8 =>
+            {
+                *oid
+            }
             _ => return Self::format_value_leaf(session, value).await,
         };
 
         // Array → show length + first elements
         // Array in auto-resolve: show length only (safe). Use debug.inspect for elements.
-        if value.tag == 91 {
+        if value.tag == TypeTag::Array as u8 {
             let length = match session.connection.get_array_length(object_id).await {
                 Ok(l) => l,
                 Err(_) => return format!("array@{:x}", object_id),
@@ -1179,6 +1200,7 @@ impl RequestHandler {
 
             let mut method_name = None;
             let mut var_line = String::new();
+            let mut source_line: Option<i32> = None;
 
             if let Ok(methods) = session
                 .connection
@@ -1190,6 +1212,16 @@ impl RequestHandler {
                     .find(|m| m.method_id == frame.location.method_id)
                 {
                     method_name = Some(method.name.clone());
+
+                    // Resolve bytecode index → source line number
+                    if let Ok(line_table) = session
+                        .connection
+                        .get_line_table(frame.location.class_id, frame.location.method_id)
+                        .await
+                    {
+                        source_line =
+                            Self::resolve_source_line(&line_table, frame.location.index);
+                    }
 
                     if include_variables {
                         if let Ok(var_table) = session
@@ -1249,9 +1281,13 @@ impl RequestHandler {
             }
 
             let mname = method_name.as_deref().unwrap_or("?");
+            let location = match source_line {
+                Some(line) => line.to_string(),
+                None => format!("@{}", frame.location.index),
+            };
             output.push_str(&format!(
                 "#{} {}.{}:{}\n",
-                idx, class_display, mname, frame.location.index
+                idx, class_display, mname, location
             ));
             if !var_line.is_empty() {
                 output.push_str(&var_line);
@@ -1381,13 +1417,26 @@ impl RequestHandler {
                 flags.push_str(" *event");
             }
 
+            let name = session
+                .connection
+                .get_thread_name(*thread_id)
+                .await
+                .unwrap_or_default();
+
             let status = match session.connection.get_frames(*thread_id, 0, 1).await {
                 Ok(frames) if !frames.is_empty() => "suspended",
                 Ok(_) => "running",
                 Err(_) => "?",
             };
 
-            output.push_str(&format!("0x{:x} {}{}\n", thread_id, status, flags));
+            if name.is_empty() {
+                output.push_str(&format!("0x{:x} {}{}\n", thread_id, status, flags));
+            } else {
+                output.push_str(&format!(
+                    "0x{:x} {} {}{}\n",
+                    thread_id, name, status, flags
+                ));
+            }
         }
 
         Ok(output)
@@ -2099,50 +2148,48 @@ impl RequestHandler {
             .map_err(|e| format!("Invoke failed: {}", e))?;
 
         if exception_id != 0 {
-            // Get exception class name + invoke toString()
-            let exc_class = match session
+            // Get exception reference type once, use for both class name and toString()
+            let exc_rt = session
                 .connection
                 .get_object_reference_type(exception_id)
                 .await
-            {
-                Ok(rt) => Self::get_class_signature(&mut session, rt)
+                .ok();
+
+            let exc_class = if let Some(rt) = exc_rt {
+                Self::get_class_signature(&mut session, rt)
                     .await
                     .and_then(|s| Self::signature_to_display_name(&s))
-                    .unwrap_or_else(|| "?".to_string()),
-                Err(_) => "?".to_string(),
+                    .unwrap_or_else(|| "?".to_string())
+            } else {
+                "?".to_string()
             };
-            // Try toString() on the exception for the message
-            let exc_msg = match session
-                .connection
-                .get_object_reference_type(exception_id)
-                .await
-            {
-                Ok(rt) => {
-                    let methods = session.connection.get_methods(rt).await.unwrap_or_default();
-                    if let Some(to_string) = methods
-                        .iter()
-                        .find(|m| m.name == "toString" && m.signature.starts_with("()"))
+
+            let exc_msg = if let Some(rt) = exc_rt {
+                let methods = session.connection.get_methods(rt).await.unwrap_or_default();
+                if let Some(to_string) = methods
+                    .iter()
+                    .find(|m| m.name == "toString" && m.signature.starts_with("()"))
+                {
+                    match session
+                        .connection
+                        .invoke_method(
+                            exception_id,
+                            target_thread,
+                            rt,
+                            to_string.method_id,
+                            &[],
+                            true,
+                        )
+                        .await
                     {
-                        match session
-                            .connection
-                            .invoke_method(
-                                exception_id,
-                                target_thread,
-                                rt,
-                                to_string.method_id,
-                                &[],
-                                true,
-                            )
-                            .await
-                        {
-                            Ok((val, 0)) => Self::format_value_leaf(&mut session, &val).await,
-                            _ => exc_class.clone(),
-                        }
-                    } else {
-                        exc_class.clone()
+                        Ok((val, 0)) => Self::format_value_leaf(&mut session, &val).await,
+                        _ => exc_class.clone(),
                     }
+                } else {
+                    exc_class.clone()
                 }
-                Err(_) => exc_class.clone(),
+            } else {
+                exc_class.clone()
             };
             return Err(format!("threw {}: {}", exc_class, exc_msg));
         }
@@ -2350,23 +2397,40 @@ impl RequestHandler {
                         format!("0x{:x}", frame.location.class_id)
                     };
 
+                    let mut source_line: Option<i32> = None;
                     let mname = if let Ok(methods) = session
                         .connection
                         .get_methods(frame.location.class_id)
                         .await
                     {
-                        methods
+                        if let Some(m) = methods
                             .iter()
                             .find(|m| m.method_id == frame.location.method_id)
-                            .map(|m| m.name.clone())
-                            .unwrap_or_else(|| "?".to_string())
+                        {
+                            // Resolve source line while we have the method
+                            if let Ok(lt) = session
+                                .connection
+                                .get_line_table(frame.location.class_id, frame.location.method_id)
+                                .await
+                            {
+                                source_line =
+                                    Self::resolve_source_line(&lt, frame.location.index);
+                            }
+                            m.name.clone()
+                        } else {
+                            "?".to_string()
+                        }
                     } else {
                         "?".to_string()
                     };
 
+                    let location = match source_line {
+                        Some(line) => line.to_string(),
+                        None => format!("@{}", frame.location.index),
+                    };
                     output.push_str(&format!(
                         "  #{} {}.{}:{}\n",
-                        idx, class_display, mname, frame.location.index
+                        idx, class_display, mname, location
                     ));
 
                     // Variables for top 3 frames only
@@ -2773,8 +2837,8 @@ impl RequestHandler {
         });
 
         Ok(format!(
-            "tracing {}* armed (entry={}, exit={})",
-            class_pattern, entry_id, exit_id
+            "tracing {} armed (entry={}, exit={})",
+            pattern, entry_id, exit_id
         ))
     }
 
@@ -2889,7 +2953,7 @@ impl RequestHandler {
                     ));
                 }
                 if truncated {
-                    out.push_str("(truncated at 500 calls)\n");
+                    out.push_str(&format!("(truncated at {} calls)\n", trace.max_calls));
                 }
                 out
             }
@@ -2968,19 +3032,21 @@ impl RequestHandler {
                     tokio::pin!(future);
                     future.as_mut().enable();
 
-                    // Check for ClassPrepare event
+                    // Check for ClassPrepare event matching our request
                     {
                         let session = session_guard.lock().await;
                         if session.last_event_seq > last_seen_seq {
                             last_seen_seq = session.last_event_seq;
                             if let Some(ref event_set) = session.last_event {
                                 for event in &event_set.events {
-                                    if let jdwp_client::events::EventKind::ClassPrepare {
-                                        signature,
-                                        ..
-                                    } = &event.details
-                                    {
-                                        return Some(signature.clone());
+                                    if event.request_id == request_id {
+                                        if let jdwp_client::events::EventKind::ClassPrepare {
+                                            signature,
+                                            ..
+                                        } = &event.details
+                                        {
+                                            return Some(signature.clone());
+                                        }
                                     }
                                 }
                             }
